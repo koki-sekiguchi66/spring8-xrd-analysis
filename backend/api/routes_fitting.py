@@ -54,6 +54,7 @@ class GroupBatchConfig(BaseModel):
     end_ep_region: int = 120
     num_init_val_set: int = 5
     vib_ratio_fine: float = 0.1
+    r_candidates: Optional[List[float]] = None
     v3_center_cap: float = 11.65
     use_bcc211_constraint: bool = False
     bcc110_center_tol_deg: float = 0.05
@@ -119,6 +120,8 @@ class PhysicsAnalysisRequest(BaseModel):
     exclude_peaks: Optional[List[str]] = None
     kinetics_max_num: Optional[int] = None
     zero_alpha_before_num: Optional[int] = None
+    b_iso_A2: float = 0.35
+    r_lattice: str = "measured"
 
 
 def _build_init_params_from_config(cfg: GroupBatchConfig) -> Dict[str, float]:
@@ -229,6 +232,7 @@ def _instantiate_fitter(
             end_ep_region=cfg.end_ep_region,
             num_init_val_set=cfg.num_init_val_set,
             vib_ratio_fine=cfg.vib_ratio_fine,
+            r_candidates=cfg.r_candidates,
             default_fit_limits=cfg.default_fit_limits,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
@@ -827,6 +831,8 @@ async def api_physics_analysis(req: PhysicsAnalysisRequest) -> Dict[str, Any]:
             exclude_peaks=req.exclude_peaks,
             kinetics_max_num=req.kinetics_max_num,
             zero_alpha_before_num=req.zero_alpha_before_num,
+            b_iso_A2=req.b_iso_A2,
+            r_lattice=req.r_lattice,
         )
         return {
             "status": "ok",

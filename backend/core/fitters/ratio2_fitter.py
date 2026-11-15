@@ -60,6 +60,7 @@ class Ratio2Fitter(BaseFitter):
         end_ep_region: int = 120,
         num_init_val_set: int = 5,
         vib_ratio_fine: float = 0.1,
+        r_candidates: Optional[List[float]] = None,
         default_fit_limits: Optional[Dict[str, Dict[str, float]]] = None,
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 200.0,
@@ -91,6 +92,8 @@ class Ratio2Fitter(BaseFitter):
         self.end_ep_region = int(end_ep_region)
         self.num_init_val_set = max(1, min(len(INITIAL_SET_MULTIPLIERS), int(num_init_val_set)))
         self.vib_ratio_fine = float(vib_ratio_fine)
+        # R of each initial-value set (rows of `_initial.xlsx`); None -> INITIAL_SET_MULTIPLIERS
+        self.r_candidates = [float(r) for r in (r_candidates or []) if r and float(r) > 0][: self.num_init_val_set] or None
 
         v1_amp = max(1e-12, self.base_init_pars["v1_amplitude"])
         self.initial_R = max(1e-6, self.base_init_pars["v2_amplitude"] / v1_amp)
@@ -288,9 +291,13 @@ class Ratio2Fitter(BaseFitter):
             if total < best_total:
                 best_total, best_R = total, R
 
-        # Stage 1: one R per initial-value set
-        for mult in INITIAL_SET_MULTIPLIERS[: self.num_init_val_set]:
-            _try(self.initial_R * mult)
+        # Stage 1: one R per initial-value set (ver10: A_bcc110 / A_fcc111 of rows N = 1..num_init_val_set)
+        if self.r_candidates:
+            for R in self.r_candidates:
+                _try(R)
+        else:
+            for mult in INITIAL_SET_MULTIPLIERS[: self.num_init_val_set]:
+                _try(self.initial_R * mult)
         # Stage 2: rough_best_R + vib * vib_ratio_fine, vib = -5 ... +5
         rough_best_R = best_R
         for vib in range(-5, 6):

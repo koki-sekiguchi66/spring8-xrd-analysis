@@ -236,6 +236,7 @@ def compute_physical_analysis(
     wilkens_M: float = 1.0,
     kinetics_max_num: Optional[int] = None,
     zero_alpha_before_num: Optional[int] = None,
+    r_lattice: str = "measured",
 ) -> Dict[str, Any]:
     """Martensite fraction, lattice parameters/strains and dislocation densities per frame.
 
@@ -244,6 +245,11 @@ def compute_physical_analysis(
     noise there (amplitude bounded but not zero), which otherwise produces a spurious f_alpha'.
     Groups fitted with 2PeaksRatio / 3PeaksLuders (pre-existing martensite of cold-rolled specimens)
     are never zeroed. `None` = take the onset stored with the groups; `0` = disabled.
+
+    `b_iso_A2` / `r_lattice`: Debye-Waller B (A^2) and the lattice parameters used for R_hkl
+    ("measured" = medians of this data set, "reference" = `a_gamma0_nm` / `a_alpha0_nm`).
+    Harada's Excel R values (850C sheet) are reproduced within 0.5 % with B = 0 and the reference
+    lattice parameters a_gamma = 0.3586 nm, a_alpha' = 0.2872 nm.
     """
     lam = float(wavelength_nm) if (wavelength_nm and wavelength_nm > 0) else DEFAULT_WAVELENGTH_NM
     wavelength_source = "user" if (wavelength_nm and wavelength_nm > 0) else "default"
@@ -329,9 +335,12 @@ def compute_physical_analysis(
     a_gamma_med = phase_median("gamma", a_gamma0_nm)
     a_alpha_med = phase_median("alpha_prime", a_alpha0_nm)
 
+    use_reference = str(r_lattice).lower() == "reference"
+    a_gamma_R = float(a_gamma0_nm) if use_reference else a_gamma_med
+    a_alpha_R = float(a_alpha0_nm) if use_reference else a_alpha_med
     R_values: Dict[str, float] = {}
     for key, info in refl_meta.items():
-        a_nm = a_gamma_med if info["phase"] == "gamma" else a_alpha_med
+        a_nm = a_gamma_R if info["phase"] == "gamma" else a_alpha_R
         R_values[key] = theoretical_R_factor(key, lam, a_nm, b_iso_A2, x_ni)
     # Normalise for readability (gamma 200 = 1000 if present)
     r_norm = R_values.get("fcc200") or (max(R_values.values()) if R_values else 1.0)
@@ -495,6 +504,10 @@ def compute_physical_analysis(
         ),
         "reflection_sources": refl_source,
         "R_values": {k: round(v, 3) for k, v in R_scaled.items()},
+        "b_iso_A2": float(b_iso_A2),
+        "r_lattice": "reference" if use_reference else "measured",
+        "a_gamma_for_R_nm": round(a_gamma_R, 6),
+        "a_alpha_prime_for_R_nm": round(a_alpha_R, 6),
         "a_gamma_median_nm": round(a_gamma_med, 6),
         "a_alpha_prime_median_nm": round(a_alpha_med, 6),
         "nums": nums,

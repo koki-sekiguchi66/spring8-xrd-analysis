@@ -169,6 +169,74 @@ def save_initial_excel(
         return str(fallback)
 
 
+def _to_float(value: Any) -> Optional[float]:
+    """Origin exports sometimes store numbers as text (e.g. '3.91E-20')."""
+    if value is None:
+        return None
+    try:
+        f = float(str(value).strip()) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
+
+
+def read_initial_workbook(excel_path: str | Path) -> Dict[str, List[Dict[str, float]]]:
+    """Read every peak block of an Origin / Harada style `_initial.xlsx`.
+
+    Layout (one or more blocks): row k = peak names over 6 columns each (y0, xc, A, wG, wL, FWHM),
+    row k+1 = `No, y0, xc, A, wG, wL, FWHM, ...`, then one row per initial-value set.
+    Returns `{peak_name: [{"No", "y0", "xc", "A", "wG", "wL", "FWHM"}, ...]}` in file order.
+    """
+    path = Path(excel_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Initial Excel file not found: {path}")
+    raw = pd.read_excel(path, header=None, engine="openpyxl", dtype=object)
+    peaks: Dict[str, List[Dict[str, float]]] = {}
+    n_rows, n_cols = raw.shape
+    r = 0
+    while r < n_rows:
+        row_vals = [str(v).strip() if v is not None and not (isinstance(v, float) and np.isnan(v)) else "" for v in raw.iloc[r]]
+        if "y0" not in row_vals or r == 0:
+            r += 1
+            continue
+        sub = row_vals
+        head = raw.iloc[r - 1].tolist()
+        no_col = sub.index("No") if "No" in sub else None
+        # Peak name = nearest non-empty header cell at or left of each 'y0' column
+        blocks: List[Tuple[str, int]] = []
+        for c, label in enumerate(sub):
+            if label != "y0":
+                continue
+            name = ""
+            for cc in range(c, -1, -1):
+                hv = head[cc]
+                if hv is not None and not (isinstance(hv, float) and np.isnan(hv)) and str(hv).strip():
+                    name = str(hv).strip()
+                    break
+            if name:
+                blocks.append((name, c))
+        rr = r + 1
+        while rr < n_rows:
+            data = raw.iloc[rr].tolist()
+            texts = [str(v).strip() if v is not None and not (isinstance(v, float) and np.isnan(v)) else "" for v in data]
+            if not any(texts) or "y0" in texts:
+                break
+            no_val = _to_float(data[no_col]) if no_col is not None else None
+            for name, c in blocks:
+                keys = ["y0", "xc", "A", "wG", "wL", "FWHM"]
+                vals = {k: _to_float(data[c + i]) if c + i < n_cols else None for i, k in enumerate(keys)}
+                if vals["xc"] is None or vals["A"] is None:
+                    continue
+                entry = {"No": int(no_val) if no_val is not None else None}
+                entry.update({k: (v if v is not None else 0.0) for k, v in vals.items()})
+                peaks.setdefault(name, []).append(entry)
+            rr += 1
+        r = rr
+    if not peaks:
+        raise ValueError(f"初期値ブロック (No / y0 / xc / A / wG / wL / FWHM) が見つかりません: {path.name}")
+    return peaks
+
+
 def load_initial_excel(
     excel_path: str | Path,
     peaks: List[str],

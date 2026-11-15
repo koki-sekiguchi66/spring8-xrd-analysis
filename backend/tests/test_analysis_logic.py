@@ -167,3 +167,65 @@ def test_phase_fraction_components_onset_and_no_fallback():
     # Only gamma peaks -> no fraction (no estimate from the gamma intensity drop)
     ph3 = compute_physical_analysis({"fcc200": g200}, wavelength_nm=LAM)
     assert all(v is None for v in ph3["f_alpha_prime"])
+
+
+def test_harada_excel_R_values_reproduced():
+    """B = 0 and reference lattice parameters reproduce the 850C Excel R values within 1 %."""
+    sheet = {"fcc111": 2138.527, "bcc110": 2863.059, "fcc200": 1047.960, "fcc220": 666.669, "bcc211": 948.347, "fcc311": 741.349}
+    nums = [1, 2]
+    pos = {"fcc111": 11.45, "fcc200": 13.23, "fcc220": 18.73, "fcc311": 22.0, "bcc110": 11.55, "bcc211": 20.07}
+    rows = _rows(nums, **{f"2th_{k}": [v] * 2 for k, v in pos.items()}, **{f"I_{k}": [100.0] * 2 for k in pos})
+    ph = compute_physical_analysis(
+        {"g": {"peaks": list(pos), "rows": rows}},
+        wavelength_nm=LAM, b_iso_A2=0.0, r_lattice="reference", a_gamma0_nm=0.3586, a_alpha0_nm=0.2872,
+    )
+    for key, val in sheet.items():
+        assert abs(ph["R_values"][key] / 1000.0 / (val / sheet["fcc200"]) - 1.0) < 0.01
+
+
+def test_initial_workbook_reader_origin_layout(tmp_path: Path):
+    """Origin/Harada `_initial.xlsx`: blocks of 6 columns per peak, numbers sometimes stored as text."""
+    import openpyxl
+
+    from backend.core.excel_io import read_initial_workbook
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    sub = ["No"] + ["y0", "xc", "A", "wG", "wL", "FWHM"] * 2
+    ws.append([None, "fcc200", None, None, None, None, None, "fcc220"])
+    ws.append(sub)
+    ws.append([50, 0, 13.2121, 619.15551, 0.01883, 0.01121, 0.02553, 0, 18.73103, 207.51799, 0.01731, 0.01637, 0.02767])
+    ws.append([])
+    ws.append([None, "bcc112", None, None, None, None, None, "bcc101"])
+    ws.append(sub)
+    ws.append([900, 30.18, 20.02136, 352.6381, 0.32335, 0.23503, 0.467, 0, 11.51084, 5151.37853, 0.23864, "3.91E-20", 0.23864])
+    path = tmp_path / "x_initial.xlsx"
+    wb.save(path)
+
+    data = read_initial_workbook(path)
+    assert set(data) == {"fcc200", "fcc220", "bcc112", "bcc101"}
+    assert data["fcc200"][0]["No"] == 50 and data["bcc112"][0]["No"] == 900
+    assert math.isclose(data["bcc101"][0]["wL"], 3.91e-20)
+    assert math.isclose(data["bcc112"][0]["y0"], 30.18)
+
+
+def test_custom_group_spec():
+    from backend.core.origin_voigt import make_custom_group_spec
+
+    spec = make_custom_group_spec(["fcc311", "fcc220", "bcc211", "fcc222"])
+    assert spec["peaks"] == ["fcc220", "bcc211", "fcc311", "fcc222"]
+    assert spec["default_engine"] == "MultiPeaks" and spec["category"] == "multi_pair"
+    assert spec["range_min"] < 18.73 and spec["range_max"] > 22.95
+    assert make_custom_group_spec(["bcc321"])["default_engine"] == "1Peak"
+    with pytest.raises(ValueError):
+        make_custom_group_spec(["bcc999"])
+
+
+def test_ratio2_uses_initial_set_candidates(synthetic_dir: Path):
+    init = {
+        "num": 5,
+        "v1_center": _tt(A_G, (1, 1, 1)), "v1_amplitude": 1240.0, "v1_wG": 0.021, "v1_wL": 0.016,
+        "v2_center": _tt(A_A, (1, 1, 0)), "v2_amplitude": 60.0, "v2_wG": 0.16, "v2_wL": 0.06,
+    }
+    fitter = Ratio2Fitter(synthetic_dir, ["fcc111", "bcc110"], init, dimt_onset_num=20, num_init_val_set=3, r_candidates=[0.05, 0.04, 0.06, 0.07])
+    assert fitter.r_candidates == [0.05, 0.04, 0.06]

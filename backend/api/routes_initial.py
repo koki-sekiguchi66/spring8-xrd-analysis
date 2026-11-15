@@ -11,8 +11,9 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..core.excel_io import save_initial_excel
-from ..core.origin_voigt import fit_origin_voigt_group, run_initial_auto_detect
+from ..core.excel_io import read_initial_workbook, save_initial_excel
+from ..core.physics_analyzer import canonical_peak_key
+from ..core.origin_voigt import fit_origin_voigt_group, run_custom_group, run_initial_auto_detect
 from ..core.utils import find_file_by_num, infer_specimen_name, list_sorted_bcg_files, resolve_analyzed_folder
 from .routes_fitting import SESSION_STORE
 
@@ -38,6 +39,20 @@ class RefitSingleRequest(BaseModel):
     initial_wL: Optional[List[float]] = None
     initial_A: Optional[List[float]] = None
     vary_y0: bool = False
+
+
+class CustomGroupRequest(BaseModel):
+    folder_path: str
+    peaks: List[str]
+    nums: List[int]
+    range_min: Optional[float] = None
+    range_max: Optional[float] = None
+    group_id: Optional[str] = None
+    vary_y0: bool = False
+
+
+class LoadInitialExcelRequest(BaseModel):
+    excel_path: str
 
 
 class SaveInitialExcelRequest(BaseModel):
@@ -93,6 +108,39 @@ async def api_initial_refit_single(req: RefitSingleRequest) -> Dict[str, Any]:
             vary_y0=req.vary_y0,
         )
         return fit_res.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/custom-group")
+async def api_initial_custom_group(req: CustomGroupRequest) -> Dict[str, Any]:
+    """Create a user-defined peak group (any combination of reflections) and fit it on the given files."""
+    try:
+        return await asyncio.to_thread(
+            run_custom_group,
+            folder_path=req.folder_path,
+            peaks=req.peaks,
+            nums=req.nums,
+            range_min=req.range_min,
+            range_max=req.range_max,
+            group_id=req.group_id,
+            vary_y0=req.vary_y0,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/load-excel")
+async def api_initial_load_excel(req: LoadInitialExcelRequest) -> Dict[str, Any]:
+    """Read an Origin / Harada style `_initial.xlsx` (all peak blocks and all initial-value rows)."""
+    try:
+        peaks = await asyncio.to_thread(read_initial_workbook, req.excel_path)
+        return {
+            "status": "ok",
+            "excel_path": str(Path(req.excel_path)),
+            "peaks": peaks,
+            "canonical": {name: canonical_peak_key(name) for name in peaks},
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

@@ -99,6 +99,7 @@ export interface CandidateGroup {
   selected_num: number;
   selected: boolean;
   is_weak: boolean;
+  is_custom?: boolean;
   fits_by_num: Record<string, CandidateFitResult>;
 }
 
@@ -166,6 +167,7 @@ export interface GroupBatchConfig {
   end_ep_region?: number;
   num_init_val_set?: number;
   vib_ratio_fine?: number;
+  r_candidates?: number[];
   final_num?: number;
   v3_center_cap?: number;
 }
@@ -242,6 +244,10 @@ export interface PhysicsAnalysisResponse {
   available_reflections?: string[];
   excluded_reflections?: string[];
   R_values?: Record<string, number>;
+  b_iso_A2?: number;
+  r_lattice?: 'measured' | 'reference';
+  a_gamma_for_R_nm?: number;
+  a_alpha_prime_for_R_nm?: number;
   a_gamma_median_nm?: number;
   a_alpha_prime_median_nm?: number;
   nums: number[];

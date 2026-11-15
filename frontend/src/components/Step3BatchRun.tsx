@@ -17,7 +17,8 @@ import { PlotFrame } from './ui/PlotFrame';
 import { CheckboxRow, FieldLabel, SelectInput, UnitNumberInput } from './ui/Field';
 import { StatusBadge } from './ui/StatusBadge';
 import { Notice } from './ui/Notice';
-import { fmtFixed, runFittingStream } from '../lib/utils';
+import { apiPost, fmtFixed, runFittingStream } from '../lib/utils';
+import { applyInitialExcel, type InitialExcelData } from '../lib/initialExcel';
 import { ENGINE_RUN_DEFAULTS, defaultLimitsFor } from '../lib/engineDefaults';
 import type { BatchGroupResult, FitLimitConfig, GroupBatchConfig } from '../types/xrd';
 
@@ -64,6 +65,8 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
   const [completedAll, setCompletedAll] = useState<boolean>(Object.keys(batchResults).length > 0);
   const [savedOutputPath, setSavedOutputPath] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [loadedInitPath, setLoadedInitPath] = useState<string>('');
+  const [initLoadMsg, setInitLoadMsg] = useState<string | null>(null);
 
   const [activeGroupId, setActiveGroupId] = useState<string>(
     batchConfigs[0]?.group_id ?? ''
@@ -81,6 +84,29 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
 
   const [liveRowsByGroup, setLiveRowsByGroup] = useState<Record<string, Record<string, number>[]>>({});
   const [liveWaveform, setLiveWaveform] = useState<LiveWaveformState | null>(null);
+
+  /** Load Origin / Harada `_initial.xlsx` and overwrite the matching groups' initial values. */
+  const handleLoadInitialExcel = async () => {
+    setError(null);
+    try {
+      const pick = await apiPost<{ selected_path?: string; path?: string; cancelled?: boolean }>(
+        '/api/dialog/select',
+        { mode: 'excel_file', title: '初期値 Excel 選択', initial_dir: folderPath || undefined }
+      );
+      const picked = pick.selected_path || pick.path;
+      if (pick.cancelled || !picked) return;
+      const data = await apiPost<InitialExcelData>('/api/initial/load-excel', { excel_path: picked });
+      const res = applyInitialExcel(batchConfigs, data);
+      setBatchConfigs(res.configs);
+      setLoadedInitPath(data.excel_path);
+      const parts = [`適用 ${res.applied.length} グループ`];
+      if (res.skipped.length) parts.push(`未適用 ${res.skipped.map((x) => `${x.group_id} (${x.reason})`).join(' / ')}`);
+      if (res.warnings.length) parts.push(res.warnings.join(' / '));
+      setInitLoadMsg(parts.join(' · '));
+    } catch (e: any) {
+      setError(e.message || '初期値 Excel の読込エラー');
+    }
+  };
 
   const updateGroupConfig = (groupId: string, patch: Partial<GroupBatchConfig>) => {
     setBatchConfigs((prev) =>
@@ -344,14 +370,17 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
               <span className="text-[12px] font-mono text-emerald-300 truncate max-w-md">
                 {savedOutputPath}
               </span>
-            ) : initialExcelPath ? (
+            ) : loadedInitPath || initialExcelPath ? (
               <span className="text-[12px] font-mono text-[#7c8494] truncate max-w-md">
-                {initialExcelPath}
+                {loadedInitPath || initialExcelPath}
               </span>
             ) : null}
           </div>
 
           <div className="flex items-center gap-2.5">
+            <Button variant="secondary" size="md" disabled={running} onClick={handleLoadInitialExcel}>
+              初期値 Excel
+            </Button>
             <Button
               data-guide="step3-run"
               variant="primary"
@@ -383,6 +412,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
       </Panel>
 
       {error && <Notice tone="error">{error}</Notice>}
+      {initLoadMsg && <Notice tone="info">{initLoadMsg}</Notice>}
 
       {/* Slim Progress Strip */}
       {progressInfo && (

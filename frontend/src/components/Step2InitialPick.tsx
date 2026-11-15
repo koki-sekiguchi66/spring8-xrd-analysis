@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Square,
   ZoomIn,
+  X,
 } from 'lucide-react';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
@@ -62,6 +63,9 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [savingExcel, setSavingExcel] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [customPeaks, setCustomPeaks] = useState<string[]>([]);
+  const [customRange, setCustomRange] = useState<{ min: string; max: string }>({ min: '', max: '' });
+  const [addingCustom, setAddingCustom] = useState<boolean>(false);
 
   const [activeProfileNum, setActiveProfileNum] = useState<number>(50);
   const [refittingGroupId, setRefittingGroupId] = useState<string | null>(null);
@@ -231,6 +235,63 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
     } finally {
       setRefittingGroupId(null);
     }
+  };
+
+  /** Reflections available for user-defined groups (markers of the late representative file). */
+  const customMarkers = useMemo(() => {
+    if (!initialData) return [];
+    const prof =
+      initialData.profiles_by_num[String(initialData.late_num)] ||
+      Object.values(initialData.profiles_by_num)[0];
+    return [...(prof?.markers ?? [])].sort((a, b) => a.observed_2th - b.observed_2th);
+  }, [initialData]);
+
+  const customAutoRange = useMemo(() => {
+    const pos = customMarkers.filter((m) => customPeaks.includes(m.name)).map((m) => m.observed_2th);
+    if (!pos.length) return null;
+    return { min: Math.min(...pos) - 0.6, max: Math.max(...pos) + 0.6 };
+  }, [customMarkers, customPeaks]);
+
+  const handleAddCustomGroup = async () => {
+    if (!initialData || customPeaks.length === 0) return;
+    const rMin = customRange.min.trim() !== '' ? Number(customRange.min) : customAutoRange?.min;
+    const rMax = customRange.max.trim() !== '' ? Number(customRange.max) : customAutoRange?.max;
+    setAddingCustom(true);
+    setError(null);
+    try {
+      const group = await apiPost<CandidateGroup>('/api/initial/custom-group', {
+        folder_path: folderPath,
+        peaks: customPeaks,
+        nums: initialData.selected_nums,
+        range_min: rMin !== undefined ? Number(rMin.toFixed(3)) : undefined,
+        range_max: rMax !== undefined ? Number(rMax.toFixed(3)) : undefined,
+        vary_y0: varyY0,
+      });
+      setInitialData((prev) =>
+        prev
+          ? {
+              ...prev,
+              candidate_groups: [
+                ...prev.candidate_groups.filter((g) => g.group_id !== group.group_id),
+                group,
+              ],
+            }
+          : prev
+      );
+      setCustomPeaks([]);
+      setCustomRange({ min: '', max: '' });
+      setFocusedGroupId(group.group_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddingCustom(false);
+    }
+  };
+
+  const handleRemoveCustomGroup = (groupId: string) => {
+    setInitialData((prev) =>
+      prev ? { ...prev, candidate_groups: prev.candidate_groups.filter((g) => g.group_id !== groupId) } : prev
+    );
   };
 
   const handleSaveAndProceed = async () => {
@@ -629,14 +690,26 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                         </span>
                       </button>
 
-                      {activeFit && !activeFit.error && (
-                        <StatusBadge
-                          tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
-                          mono
-                        >
-                          R² {fmtFixed(activeFit.r_squared, 4)}
-                        </StatusBadge>
-                      )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {activeFit && !activeFit.error && (
+                          <StatusBadge
+                            tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
+                            mono
+                          >
+                            R² {fmtFixed(activeFit.r_squared, 4)}
+                          </StatusBadge>
+                        )}
+                        {group.is_custom && (
+                          <button
+                            type="button"
+                            aria-label="カスタムグループを削除"
+                            onClick={() => handleRemoveCustomGroup(group.group_id)}
+                            className="size-6 grid place-items-center rounded text-[#7c8494] hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                          >
+                            <X className="size-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md bg-[#08090c] border border-[#22262f]">
@@ -703,6 +776,70 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                 </div>
               );
             })}
+          </div>
+
+          {/* User-defined group (any combination of reflections) */}
+          <div className="rounded-lg border border-[#22262f] bg-[#101216] p-3.5 space-y-2.5">
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-[#cfd4de]">
+              <Plus className="size-3.5 text-sky-300" aria-hidden="true" />
+              <span>カスタムグループ</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {customMarkers.map((m) => {
+                const on = customPeaks.includes(m.name);
+                const isGamma = m.phase === 'gamma';
+                return (
+                  <button
+                    key={m.name}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() =>
+                      setCustomPeaks((prev) =>
+                        prev.includes(m.name) ? prev.filter((p) => p !== m.name) : [...prev, m.name]
+                      )
+                    }
+                    className={`h-7 px-2.5 rounded text-[12px] font-mono tabular-nums border transition-colors ${
+                      on
+                        ? isGamma
+                          ? 'bg-sky-500/20 border-sky-400/70 text-sky-200'
+                          : 'bg-amber-500/20 border-amber-400/70 text-amber-200'
+                        : 'bg-[#08090c] border-[#22262f] text-[#858d9c] hover:text-[#eef0f4]'
+                    }`}
+                  >
+                    {m.name} <span className="text-[#5d6473]">{fmtFixed(m.observed_2th, 2)}°</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-end gap-2.5">
+              <div className="w-32">
+                <UnitNumberInput
+                  unit="deg"
+                  step="0.01"
+                  value={customRange.min}
+                  placeholder={customAutoRange ? fmtFixed(customAutoRange.min, 2) : '下限'}
+                  onChange={(e) => setCustomRange((r) => ({ ...r, min: e.target.value }))}
+                />
+              </div>
+              <div className="w-32">
+                <UnitNumberInput
+                  unit="deg"
+                  step="0.01"
+                  value={customRange.max}
+                  placeholder={customAutoRange ? fmtFixed(customAutoRange.max, 2) : '上限'}
+                  onChange={(e) => setCustomRange((r) => ({ ...r, max: e.target.value }))}
+                />
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={customPeaks.length === 0 || addingCustom}
+                onClick={handleAddCustomGroup}
+              >
+                {addingCustom ? <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" /> : <Plus className="size-3.5" aria-hidden="true" />}
+                <span>追加</span>
+              </Button>
+            </div>
           </div>
         </div>
       )}

@@ -46,6 +46,8 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
   // '' = DIMT onset stored with the fitted groups; 0 = disabled
   const [zeroAlphaBefore, setZeroAlphaBefore] = useState<string>('');
   const [excludedRefl, setExcludedRefl] = useState<string[]>([]);
+  const [bIso, setBIso] = useState<number>(0.35);
+  const [rLattice, setRLattice] = useState<'measured' | 'reference'>('measured');
   const [showAdvancedParams, setShowAdvancedParams] = useState<boolean>(false);
 
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -93,6 +95,8 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         a_alpha0_nm: aAlpha0,
         exclude_peaks: overrideExcluded ?? excludedRefl,
         zero_alpha_before_num: zeroAlphaBefore.trim() === '' ? undefined : Number(zeroAlphaBefore),
+        b_iso_A2: bIso,
+        r_lattice: rLattice,
       });
       setResult(res);
       onPhysicsComputed?.();
@@ -318,7 +322,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       {/* Calibration Disclosure */}
       <Disclosure
         title="装置・基準定数"
-        summary={`λ ${wavelengthNm}nm · FWHM_inst ${instrumentalFwhm}° · 除外 ${excludedRefl.length ? excludedRefl.join(',') : 'なし'}`}
+        summary={`λ ${wavelengthNm}nm · B ${bIso}Å² · R格子 ${rLattice === 'measured' ? '実測' : '基準値'} · 除外 ${excludedRefl.length ? excludedRefl.join(',') : 'なし'}`}
         open={showAdvancedParams}
         onToggle={() => setShowAdvancedParams((v) => !v)}
       >
@@ -339,6 +343,15 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
               value={zeroAlphaBefore}
               placeholder={result ? String(result.zero_alpha_before_num ?? '') : '変態開始'}
               onChange={(e) => setZeroAlphaBefore(e.target.value)}
+            />
+          </div>
+          <div>
+            <FieldLabel>B (Debye-Waller)</FieldLabel>
+            <UnitNumberInput
+              unit="Å²"
+              step="0.01"
+              value={bIso}
+              onChange={(e) => setBIso(parseFloat(e.target.value) || 0)}
             />
           </div>
           <div>
@@ -368,6 +381,32 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
               onChange={(e) => setAAlpha0(parseFloat(e.target.value) || 0)}
             />
           </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2.5">
+          <FieldLabel>R の格子定数</FieldLabel>
+          <SegmentedControl<'measured' | 'reference'>
+            ariaLabel="R の格子定数"
+            size="sm"
+            value={rLattice}
+            onChange={setRLattice}
+            options={[
+              { value: 'measured', label: '実測' },
+              { value: 'reference', label: 'a_γ0 / a_α\'0' },
+            ]}
+          />
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              // Harada's Excel R values: no Debye-Waller term, a_γ = 0.3586 nm, a_α' = 0.2872 nm
+              setBIso(0);
+              setRLattice('reference');
+              setAGamma0(0.3586);
+              setAAlpha0(0.2872);
+            }}
+          >
+            原田 Excel 互換
+          </Button>
         </div>
         {result?.available_reflections?.length ? (
           <div className="mt-3 space-y-1.5">

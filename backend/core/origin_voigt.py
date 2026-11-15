@@ -128,6 +128,12 @@ PHASE_REFLECTIONS: List[Dict[str, Any]] = [
     {"name": "fcc222", "phase": "gamma", "phase_label": "γ-FCC", "hkl": "(222)", "Q": 12, "default_2th": 22.95},
     {"name": "bcc220", "phase": "alpha_prime", "phase_label": "α'-BCC", "hkl": "(220)", "Q": 8, "default_2th": 23.16},
     {"name": "bcc321", "phase": "alpha_prime", "phase_label": "α'-BCC", "hkl": "(321)", "Q": 14, "default_2th": 30.87},
+    # Higher-angle reflections available for custom groups
+    {"name": "bcc310", "phase": "alpha_prime", "phase_label": "α'-BCC", "hkl": "(310)", "Q": 10, "default_2th": 25.94},
+    {"name": "fcc400", "phase": "gamma", "phase_label": "γ-FCC", "hkl": "(400)", "Q": 16, "default_2th": 26.60},
+    {"name": "bcc222", "phase": "alpha_prime", "phase_label": "α'-BCC", "hkl": "(222)", "Q": 12, "default_2th": 28.47},
+    {"name": "fcc331", "phase": "gamma", "phase_label": "γ-FCC", "hkl": "(331)", "Q": 19, "default_2th": 29.04},
+    {"name": "fcc420", "phase": "gamma", "phase_label": "γ-FCC", "hkl": "(420)", "Q": 20, "default_2th": 29.81},
 ]
 
 CANDIDATE_GROUP_SPECS: List[Dict[str, Any]] = [
@@ -747,6 +753,113 @@ def fit_origin_voigt_group(
     )
 
 
+def build_candidate_group(
+    spec: Dict[str, Any],
+    loaded_arrays: Dict[int, Tuple[str, np.ndarray, np.ndarray]],
+    target_nums: List[int],
+    vary_y0: bool = False,
+) -> Dict[str, Any]:
+    """Fit one candidate group on every loaded representative file (Step 2 card)."""
+    gid = spec["group_id"]
+    fits_by_num: Dict[str, Dict[str, Any]] = {}
+    for num, (fname, x, y) in loaded_arrays.items():
+        try:
+            fit_res = fit_origin_voigt_group(
+                x_full=x,
+                y_full=y,
+                num=num,
+                filename=fname,
+                group_id=gid,
+                peak_names=spec["peaks"],
+                range_min=spec["range_min"],
+                range_max=spec["range_max"],
+                vary_y0=vary_y0,
+            )
+            fits_by_num[str(num)] = fit_res.to_dict()
+        except Exception as e:
+            fits_by_num[str(num)] = {"error": str(e), "num": num}
+
+    early_num, late_num = target_nums[0], target_nums[-1]
+    rec_num = early_num if spec["recommended_stage"] == "early" else late_num
+    if str(rec_num) not in fits_by_num and target_nums:
+        rec_num = target_nums[0]
+    rec_fit = fits_by_num.get(str(rec_num), {})
+    is_weak = bool(rec_fit.get("is_weak", False))
+    return {
+        **spec,
+        "recommended_num": rec_num,
+        "selected_num": rec_num,
+        "selected": bool(spec["default_selected"] and not is_weak),
+        "is_weak": is_weak,
+        "fits_by_num": fits_by_num,
+    }
+
+
+def make_custom_group_spec(
+    peaks: List[str],
+    range_min: Optional[float] = None,
+    range_max: Optional[float] = None,
+    group_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Spec of a user-defined group (e.g. Harada's multi-peak set fcc220 + bcc211 + fcc311 + fcc222)."""
+    ref = {r["name"]: r for r in PHASE_REFLECTIONS}
+    unknown = [p for p in peaks if p not in ref]
+    if unknown or not peaks:
+        raise ValueError(f"未対応の反射: {unknown or peaks} (使用可能: {list(ref)})")
+    ordered = sorted(dict.fromkeys(peaks), key=lambda p: ref[p]["default_2th"])
+    lo = float(range_min) if range_min is not None else ref[ordered[0]]["default_2th"] - 0.6
+    hi = float(range_max) if range_max is not None else ref[ordered[-1]]["default_2th"] + 0.6
+    if not hi > lo:
+        raise ValueError(f"範囲が不正です: {lo} - {hi}")
+    phases = [ref[p]["phase"] for p in ordered]
+    multi = len(ordered) > 1
+    return {
+        "group_id": group_id or ("custom_" + "_".join(ordered)),
+        "label": " + ".join(ordered) + " (カスタム)",
+        "category": "multi_pair" if multi else "single",
+        "peaks": ordered,
+        "phases": phases,
+        "range_min": round(lo, 3),
+        "range_max": round(hi, 3),
+        "recommended_stage": "late" if "alpha_prime" in phases else "early",
+        "default_engine": "MultiPeaks" if multi else "1Peak",
+        "supported_engines": ["MultiPeaks", "2PeaksRatio", "3PeaksLuders"] if multi else ["1Peak"],
+        "default_selected": True,
+        "description": "ユーザー定義グループ",
+        "is_custom": True,
+    }
+
+
+def run_custom_group(
+    folder_path: str | Path,
+    peaks: List[str],
+    nums: List[int],
+    range_min: Optional[float] = None,
+    range_max: Optional[float] = None,
+    group_id: Optional[str] = None,
+    vary_y0: bool = False,
+) -> Dict[str, Any]:
+    """Fit a user-defined group on the given representative files and return a Step 2 card."""
+    root = resolve_analyzed_folder(folder_path)
+    files = list_sorted_bcg_files(root / "bcg_removed_arpls")
+    if not files:
+        raise FileNotFoundError("No *bcg.csv files found. Run preprocessing first.")
+    spec = make_custom_group_spec(peaks, range_min, range_max, group_id)
+    loaded: Dict[int, Tuple[str, np.ndarray, np.ndarray]] = {}
+    for num in nums:
+        idx, path = find_file_by_num(files, int(num))
+        if path is None:
+            continue
+        arr = np.loadtxt(path, delimiter=",")
+        loaded[files[idx][0]] = (path.name, arr[:, 0], arr[:, 1])
+    if not loaded:
+        raise FileNotFoundError(f"指定 num のファイルが見つかりません: {nums}")
+    target = sorted(loaded)
+    group = build_candidate_group(spec, loaded, target, vary_y0)
+    group["selected"] = True  # explicitly requested by the user, even if a peak is weak
+    return group
+
+
 def run_initial_auto_detect(
     folder_path: str | Path,
     mode: str = "auto",
@@ -797,42 +910,9 @@ def run_initial_auto_detect(
             "markers": markers,
         }
 
-    candidate_groups: List[Dict[str, Any]] = []
-    for spec in CANDIDATE_GROUP_SPECS:
-        gid = spec["group_id"]
-        fits_by_num: Dict[str, Dict[str, Any]] = {}
-        for num, (fname, x, y) in loaded_arrays.items():
-            try:
-                fit_res = fit_origin_voigt_group(
-                    x_full=x,
-                    y_full=y,
-                    num=num,
-                    filename=fname,
-                    group_id=gid,
-                    peak_names=spec["peaks"],
-                    range_min=spec["range_min"],
-                    range_max=spec["range_max"],
-                    vary_y0=vary_y0,
-                )
-                fits_by_num[str(num)] = fit_res.to_dict()
-            except Exception as e:
-                fits_by_num[str(num)] = {"error": str(e), "num": num}
-
-        rec_num = early_num if spec["recommended_stage"] == "early" else late_num
-        if str(rec_num) not in fits_by_num and target_nums:
-            rec_num = target_nums[0]
-
-        rec_fit = fits_by_num.get(str(rec_num), {})
-        is_weak = bool(rec_fit.get("is_weak", False))
-
-        candidate_groups.append({
-            **spec,
-            "recommended_num": rec_num,
-            "selected_num": rec_num,
-            "selected": bool(spec["default_selected"] and not is_weak),
-            "is_weak": is_weak,
-            "fits_by_num": fits_by_num,
-        })
+    candidate_groups: List[Dict[str, Any]] = [
+        build_candidate_group(spec, loaded_arrays, target_nums, vary_y0) for spec in CANDIDATE_GROUP_SPECS
+    ]
 
     return {
         "folder_path": str(root),

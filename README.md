@@ -38,6 +38,8 @@
    - **1Peak** (`single_fitter.py`)、**2PeaksRatio** (`ratio2_fitter.py`)、**3PeaksLuders** (`luders3_fitter.py`)、**MultiPeaks** (`multi_fitter.py`) の4エンジンを搭載。各エンジンは原田さんの元スクリプト（1Peak=ver7.0、MultiPeaks=ver4.0.0、2PeaksRatio=ver10、3PeaksLuders=ver4）の解析手法・既定値に準拠し、論理バグのみ修正しています。
    - 背景は前処理でのみ除去し、フィット窓では Voigt 成分だけを当てはめます（元スクリプトどおり）。
    - 2PeaksRatio は冷間圧延材の既存 α' 用（変態開始前のみ、R を粗→細探索）、3PeaksLuders は同じく変態開始後用です。焼鈍・時効材の fcc111+bcc110 は MultiPeaks（新生ピーク）が既定です。
+   - Step 2 で任意の反射の組み合わせ（例: fcc220 + bcc211 + fcc311 + fcc222）をカスタムグループとして追加できます。
+   - Step 3 の「初期値 Excel」で Origin / 原田形式の `_initial.xlsx` を読み込み、各グループの初期値を置き換えられます（2PeaksRatio は各行の A2/A1 を粗探索の R 候補に使用）。
    - 初期値ファイル `init_num` から変形後期側（昇順）と変形初期側（降順）の双方向へパラメータを引き継ぎながら連続解析。
 4. **Step 4: 各相の要確認フィット（外れ値）一括選択・個別/スマート再フィット & Excel出力 (`Step4ReviewExport.tsx` / `excel_io.py`)**
    - **複数相・全グループ横断の要確認フィット一括選択**: 連続フィッティング完了後、$\gamma$-FCC相および$\alpha'$-BCC相のすべての「要確認フィット（`outlier_nums`）」を一覧表示。「すべて一括選択」「$\gamma$-FCC相を一括選択」「$\alpha'$-BCC相を一括選択」または任意の `num` 追加が可能。
@@ -45,7 +47,7 @@
    - ピーク別シート・物理特性解析シート（`Physical_Analysis`）およびトレンドグラフ画像を埋め込んだ `（試料名）output.xlsx` を一括出力。
 5. **Step 5: マルテンサイト相分率・各相転位密度・格子ひずみ解析ダッシュボード (`Step5PhysicsAnalysis.tsx` / `physics_analyzer.py`)**
    - Step 3〜4の解析結果（または既存の `*output.xlsx` ファイルの直接読み込み）から以下の材料物理量を自動算出・可視化：
-     - **① マルテンサイト相分率 ($f_{\alpha'}$) & オーステナイト相分率 ($f_\gamma$) 推移**: 直接比較法（多重度 $p_{hkl}$・構造因子 $|F|^2/V_c^2$（Cromer-Mann 散乱因子・実測格子定数）・LP 因子・Debye-Waller 因子）による体積分率算出。使用する反射は選択可能（集合組織の強い fcc111 等を除外可）、同一反射の成分は合算、変態開始前の新生 α' は 0 とみなします。X線波長は入力値を使用します（既定 0.04133 nm）。参考として num に対する経験式 $f_{\alpha'} = f_s [1 - \exp(-\beta \max(0, \text{num}-\text{num}_0)^n)]$ をフィットします（ひずみ基準の Olson-Cohen 式ではありません）。
+     - **① マルテンサイト相分率 ($f_{\alpha'}$) & オーステナイト相分率 ($f_\gamma$) 推移**: 直接比較法（多重度 $p_{hkl}$・構造因子 $|F|^2/V_c^2$（Cromer-Mann 散乱因子・実測格子定数）・LP 因子・Debye-Waller 因子）による体積分率算出。使用する反射は選択可能（集合組織の強い fcc111 等を除外可）、同一反射の成分は合算、変態開始前の新生 α' は 0 とみなします。X線波長は入力値を使用します（既定 0.04133 nm）。Debye-Waller 因子 B と R 計算用の格子定数（実測 / 基準値）を選べ、「原田 Excel 互換」（B = 0、a_γ = 0.3586 nm、a_α' = 0.2872 nm）で 850C 解析シートの R 値を 0.5% 以内で再現します。参考として num に対する経験式 $f_{\alpha'} = f_s [1 - \exp(-\beta \max(0, \text{num}-\text{num}_0)^n)]$ をフィットします（ひずみ基準の Olson-Cohen 式ではありません）。
      - **② 各相（$\gamma$-FCC / $\alpha'$-BCC）の転位密度変化 ($\rho_\gamma, \rho_{\alpha'}$ [$\text{m}^{-2}$])**: Modified Williamson-Hall法（$\rho = 2\,\text{slope}^2/(\pi M^2 b^2)$、弾性異方性コントラスト因子 $\bar{C}_{hkl} = \bar{C}_{h00}(1 - q H^2)$ 考慮、半定量）および各結晶面ごとの転位密度推移（サイズ広がりを無視した上限値）、ならびに指定フレームの Modified W-H 線形回帰プロット（$\Delta K$ vs $K\sqrt{\bar{C}}$）。
      - **③ 弾性格子ひずみ ($\varepsilon_{hkl}$ [$\mu\varepsilon$]) & 格子定数 ($a_\gamma, a_{\alpha'}$ [$\text{nm}$]) の変化**: $\gamma$-FCC / $\alpha'$-BCC 相間の応力分配挙動の可視化。
 
