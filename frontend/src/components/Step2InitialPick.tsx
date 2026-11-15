@@ -399,22 +399,23 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
     <div className="space-y-4">
       {/* Compact Toolbar */}
       <Panel>
-        <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2.5">
+        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <SegmentedControl
               ariaLabel="表示切替"
+              size="sm"
               value={subScreen}
               onChange={setSubScreen}
               options={[
                 {
                   value: 'overview',
-                  label: '全体・候補選択',
+                  label: '全体',
                   icon: <Layers className="size-3.5" aria-hidden="true" />,
                   accent: 'sky',
                 },
                 {
                   value: 'detail',
-                  label: '拡大フィット調整',
+                  label: '詳細 Fit',
                   icon: <ZoomIn className="size-3.5" aria-hidden="true" />,
                   accent: 'sky',
                 },
@@ -422,39 +423,40 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
             />
 
             <SegmentedControl
-              ariaLabel="代表ファイル選出モード"
+              ariaLabel="選出モード"
+              size="sm"
               value={mode}
               onChange={(m) => {
                 setMode(m);
                 if (m === 'auto') runDetection('auto');
               }}
               options={[
-                { value: 'auto', label: '自動選出', accent: 'neutral' },
-                { value: 'manual', label: '手動指定', accent: 'amber' },
+                { value: 'auto', label: '自動', accent: 'neutral' },
+                { value: 'manual', label: '手動', accent: 'amber' },
               ]}
             />
 
             {mode === 'manual' && (
               <div className="flex items-center gap-1.5">
                 <TextInput
-                  aria-label="手動指定するファイル番号"
+                  aria-label="ファイル番号"
                   mono
                   value={manualInput}
                   onChange={(e) => setManualInput(e.target.value)}
                   placeholder="50, 900"
-                  className="w-32 tabular-nums"
+                  className="w-28 tabular-nums"
                 />
-                <Button variant="amber" size="sm" onClick={handleManualRun}>
-                  <Plus className="size-3.5" aria-hidden="true" />
-                  <span>再探索</span>
+                <Button variant="amber" size="xs" onClick={handleManualRun}>
+                  <Plus className="size-3" aria-hidden="true" />
+                  <span>探索</span>
                 </Button>
               </div>
             )}
 
             {loading && (
-              <span className="inline-flex items-center gap-1.5 text-xs font-mono text-sky-300">
-                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
-                <span>探索中...</span>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-sky-300">
+                <RefreshCw className="size-3 animate-spin" aria-hidden="true" />
+                <span>探索中</span>
               </span>
             )}
           </div>
@@ -464,14 +466,10 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
             size="sm"
             disabled={savingExcel || !initialData}
             onClick={handleSaveAndProceed}
-            title={`${specimenName}_initial.xlsx を保存して Step 3 へ進みます`}
+            title={`${specimenName || 'specimen'}_initial.xlsx`}
           >
             <FileSpreadsheet className="size-3.5" aria-hidden="true" />
-            <span>
-              {savingExcel
-                ? '保存中...'
-                : `${specimenName || '試料'}_initial.xlsx 保存`}
-            </span>
+            <span>{savingExcel ? '保存中...' : '保存して次へ'}</span>
             <ArrowRight className="size-3.5" aria-hidden="true" />
           </Button>
         </div>
@@ -481,36 +479,31 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
       {/* SUB-SCREEN A: Full Profile & Candidate Grid */}
       {initialData && subScreen === 'overview' && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <PlotFrame
-            title="全体回折プロファイル"
-            subtitle={`#${activeProfileNum} / 変態開始推定 #${initialData.dimt_onset_estimate}`}
+            title="回折プロファイル"
+            subtitle={`#${activeProfileNum} · 変態開始 #${initialData.dimt_onset_estimate}`}
             toolbar={
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <StatusBadge tone="sky" dot>
-                  γ-FCC (5面)
+                  γ
                 </StatusBadge>
                 <StatusBadge tone="amber" dot>
-                  α&apos;-BCC (4面)
+                  α&apos;
                 </StatusBadge>
-                <div className="h-4 w-px bg-[#23262e]" />
+                <div className="h-3.5 w-px bg-[#22262f]" />
                 {initialData.selected_nums.map((n) => (
                   <button
                     key={n}
                     type="button"
                     onClick={() => setActiveProfileNum(n)}
-                    className={`h-6 px-2.5 rounded text-xs font-mono tabular-nums border transition-colors ${
+                    className={`h-6 px-2 rounded text-[11px] font-mono tabular-nums border transition-colors ${
                       activeProfileNum === n
                         ? 'bg-sky-500/15 border-sky-500/50 text-sky-300 font-semibold'
-                        : 'bg-[#0a0b0e] border-[#23262e] text-[#9ca3b0] hover:text-[#eceef2]'
+                        : 'bg-[#08090c] border-[#22262f] text-[#858d9c] hover:text-[#eef0f4]'
                     }`}
                   >
                     #{n}
-                    {n === initialData.early_num
-                      ? ' 初期'
-                      : n === initialData.late_num
-                      ? ' 後期'
-                      : ''}
                   </button>
                 ))}
               </div>
@@ -519,7 +512,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
             <PlotlyChart
               data={fullProfileTraces}
               layout={{
-                margin: { l: 56, r: 16, t: 16, b: 40 },
+                margin: { l: 54, r: 16, t: 14, b: 38 },
                 xaxis: { title: '2θ (deg)', range: [10.5, 25.0] },
                 yaxis: { title: 'Intensity (a.u.)', range: [-200, 18000] },
               }}
@@ -527,7 +520,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
             />
           </PlotFrame>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
             {initialData.candidate_groups.map((group) => {
               const activeFit = group.fits_by_num[String(group.selected_num)];
               const isMulti = group.category === 'multi_pair';
@@ -535,60 +528,69 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
               return (
                 <div
                   key={group.group_id}
-                  className={`rounded-lg border p-3.5 flex flex-col justify-between gap-3 transition-colors ${
+                  className={`rounded-md border p-3 flex flex-col justify-between gap-2.5 transition-colors shadow-[inset_0_1px_0_0_rgba(255,255,255,0.03)] ${
                     group.selected
                       ? isMulti
-                        ? 'bg-[#16181d] border-amber-500/45'
-                        : 'bg-[#16181d] border-sky-500/45'
-                      : 'bg-[#121418] border-[#23262e] opacity-60'
+                        ? 'bg-[#15181e] border-amber-500/40'
+                        : 'bg-[#15181e] border-sky-500/40'
+                      : 'bg-[#101216] border-[#22262f] opacity-55'
                   }`}
                 >
-                  <div className="space-y-2.5">
-                    <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
                       <button
                         type="button"
                         onClick={() =>
                           handleToggleGroupSelected(group.group_id, !group.selected)
                         }
-                        className="flex items-start gap-2 text-left min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 rounded"
+                        className="flex items-center gap-2 text-left min-w-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/60 rounded"
                       >
                         {group.selected ? (
-                          <CheckSquare className="size-4 text-sky-400 shrink-0 mt-0.5" aria-hidden="true" />
+                          <CheckSquare className="size-3.5 text-sky-400 shrink-0" aria-hidden="true" />
                         ) : (
-                          <Square className="size-4 text-[#636b78] shrink-0 mt-0.5" aria-hidden="true" />
+                          <Square className="size-3.5 text-[#5d6473] shrink-0" aria-hidden="true" />
                         )}
-                        <div className="min-w-0">
-                          <div className="text-[13px] font-semibold text-[#eceef2] truncate">
-                            {group.label}
-                          </div>
-                          <div className="text-xs text-[#9ca3b0] truncate mt-0.5">
-                            {group.description}
-                          </div>
-                        </div>
+                        <span className="text-[12px] font-semibold font-mono text-[#eef0f4] truncate">
+                          {group.peaks.join(' + ')}
+                        </span>
                       </button>
 
-                      {activeFit && !activeFit.error && (
-                        <StatusBadge
-                          tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
-                          mono
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {activeFit && !activeFit.error && (
+                          <StatusBadge
+                            tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
+                            mono
+                          >
+                            {fmtFixed(activeFit.r_squared, 4)}
+                          </StatusBadge>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFocusedGroupId(group.group_id);
+                            setSubScreen('detail');
+                          }}
+                          title="詳細調整"
+                          className="h-5 px-1.5 rounded bg-[#08090c] border border-[#22262f] hover:border-[#303644] text-[10px] text-[#858d9c] hover:text-[#eef0f4] transition-colors flex items-center gap-1"
                         >
-                          R² {fmtFixed(activeFit.r_squared, 4)}
-                        </StatusBadge>
-                      )}
+                          <ZoomIn className="size-3" />
+                          <span>調整</span>
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-[#0a0b0e] border border-[#23262e]">
-                      <span className="text-[11px] text-[#636b78]">代表ファイル</span>
+                    <div className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-[#08090c] border border-[#22262f]">
+                      <span className="text-[10px] font-mono text-[#5d6473]">FRAME</span>
                       <div className="flex items-center gap-1">
                         {initialData.selected_nums.map((numOpt) => (
                           <button
                             key={numOpt}
                             type="button"
                             onClick={() => handleChangeGroupNum(group.group_id, numOpt)}
-                            className={`h-5 px-2 rounded text-[11px] font-mono tabular-nums transition-colors ${
+                            className={`h-5 px-1.5 rounded text-[10px] font-mono tabular-nums transition-colors ${
                               group.selected_num === numOpt
                                 ? 'bg-sky-500 text-zinc-950 font-semibold'
-                                : 'bg-[#16181d] text-[#9ca3b0] hover:text-[#eceef2]'
+                                : 'bg-[#15181e] text-[#858d9c] hover:text-[#eef0f4]'
                             }`}
                           >
                             #{numOpt}
@@ -599,7 +601,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                     </div>
 
                     {activeFit && activeFit.peaks && (
-                      <div className="space-y-1 px-2.5 py-2 rounded bg-[#0a0b0e] border border-[#23262e] font-mono text-xs tabular-nums">
+                      <div className="space-y-1 px-2 py-1.5 rounded bg-[#08090c] border border-[#22262f] font-mono text-[11px] tabular-nums">
                         {activeFit.peaks.map((pk) => {
                           const isGamma = pk.peak_name.startsWith('fcc');
                           return (
@@ -614,8 +616,8 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                               >
                                 {pk.peak_name}
                               </span>
-                              <span className="text-[#9ca3b0]">
-                                {fmtFixed(pk.xc, 3)}° · A={fmtFixed(pk.A, 0)} · W={fmtFixed(pk.FWHM, 4)}°
+                              <span className="text-[#858d9c]">
+                                {fmtFixed(pk.xc, 3)}° · A {fmtFixed(pk.A, 0)} · W {fmtFixed(pk.FWHM, 4)}
                               </span>
                             </div>
                           );
@@ -623,19 +625,6 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                       </div>
                     )}
                   </div>
-
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    block
-                    onClick={() => {
-                      setFocusedGroupId(group.group_id);
-                      setSubScreen('detail');
-                    }}
-                  >
-                    <ZoomIn className="size-3.5 text-sky-400" aria-hidden="true" />
-                    <span>拡大フィット調整</span>
-                  </Button>
                 </div>
               );
             })}
@@ -703,10 +692,10 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
               return (
                 <>
                   <PanelHeader
-                    title={focusedGroup.label}
-                    subtitle={focusedGroup.description}
+                    title={focusedGroup.peaks.join(' + ')}
+                    subtitle={`#${focusedGroup.selected_num}`}
                     actions={
-                      <div className="flex items-center gap-1 bg-[#0a0b0e] border border-[#23262e] rounded-md p-0.5">
+                      <div className="flex items-center gap-1 bg-[#08090c] border border-[#22262f] rounded-md p-0.5">
                         {initialData.selected_nums.map((numOpt) => (
                           <button
                             key={numOpt}
@@ -862,7 +851,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                           }`}
                           aria-hidden="true"
                         />
-                        <span>再フィット</span>
+                        <span>再Fit</span>
                       </Button>
                     </div>
                   </PanelBody>

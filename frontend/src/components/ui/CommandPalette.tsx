@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, CornerDownLeft } from 'lucide-react';
+import { CornerDownLeft, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export interface CommandItem {
@@ -17,7 +17,7 @@ export interface CommandPaletteProps {
   items: CommandItem[];
 }
 
-/** VS Code / Linear style Ctrl+K command palette for fast navigation and workbench actions. */
+/** Raycast / Linear style Ctrl+K command launcher. */
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, items }) => {
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
@@ -69,32 +69,32 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, i
       role="dialog"
       aria-modal="true"
       aria-label="コマンドパレット"
-      className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-[14vh] px-4"
+      className="fixed inset-0 z-50 bg-black/65 flex items-start justify-center pt-[14vh] px-4"
       onClick={onClose}
       onKeyDown={handleKeyDown}
     >
       <div
-        className="w-full max-w-lg rounded-lg bg-[#16181d] border border-[#313642] shadow-2xl overflow-hidden"
+        className="w-full max-w-lg rounded-md bg-[#15181e] border border-[#303644] shadow-[0_24px_48px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(255,255,255,0.05)] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="h-11 px-3.5 border-b border-[#23262e] flex items-center gap-2.5">
-          <Search className="size-4 text-[#636b78] shrink-0" aria-hidden="true" />
+        <div className="h-10 px-3 border-b border-[#22262f] flex items-center gap-2.5 bg-[#101216]">
+          <Search className="size-3.5 text-[#5d6473] shrink-0" aria-hidden="true" />
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ステージ移動・機能を実行..."
-            className="w-full bg-transparent text-[13px] text-[#eceef2] placeholder-[#636b78] focus:outline-none"
+            placeholder="検索 / コマンド..."
+            className="w-full bg-transparent text-[12px] text-[#eef0f4] placeholder-[#5d6473] focus:outline-none"
           />
-          <kbd className="px-1.5 py-0.5 rounded bg-[#0a0b0e] border border-[#23262e] text-[10px] font-mono text-[#636b78]">
+          <kbd className="px-1.5 py-0.5 rounded bg-[#08090c] border border-[#22262f] shadow-[inset_0_-1px_0_0_#1a1d25] text-[10px] font-mono text-[#5d6473]">
             ESC
           </kbd>
         </div>
 
-        <div className="max-h-72 overflow-y-auto py-1.5">
+        <div className="max-h-72 overflow-y-auto p-1.5 space-y-0.5">
           {filtered.length === 0 ? (
-            <div className="py-8 text-center text-xs text-[#636b78]">一致する操作がありません</div>
+            <div className="py-8 text-center text-[11px] font-mono text-[#5d6473]">該当なし</div>
           ) : (
             filtered.map((item, idx) => {
               const selected = idx === activeIdx;
@@ -108,22 +108,30 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, i
                     onClose();
                   }}
                   className={cn(
-                    'w-full px-3.5 py-2 text-left flex items-center justify-between gap-3 text-[13px] transition-colors',
-                    selected ? 'bg-[#1c1f26] text-[#eceef2]' : 'text-[#9ca3b0]'
+                    'w-full px-2.5 py-2 rounded text-left flex items-center justify-between gap-3 text-[12px] transition-colors',
+                    selected ? 'bg-[#1f242e] text-[#eef0f4]' : 'text-[#98a0ae]'
                   )}
                 >
-                  <span className="flex items-center gap-2.5 min-w-0">
-                    {item.icon && <span className="text-[#9ca3b0] shrink-0">{item.icon}</span>}
+                  <span className="flex items-center gap-2 min-w-0">
+                    {item.icon && (
+                      <span className={cn('shrink-0', selected ? 'text-sky-400' : 'text-[#5d6473]')}>
+                        {item.icon}
+                      </span>
+                    )}
                     <span className="truncate">{item.label}</span>
-                    <span className="text-[11px] text-[#636b78] shrink-0">{item.group}</span>
                   </span>
-                  {selected ? (
-                    <CornerDownLeft className="size-3.5 text-sky-400 shrink-0" aria-hidden="true" />
-                  ) : item.shortcut ? (
-                    <kbd className="text-[11px] font-mono text-[#636b78] shrink-0">
-                      {item.shortcut}
-                    </kbd>
-                  ) : null}
+                  <span className="flex items-center gap-2 shrink-0">
+                    <span className="px-1.5 py-0.5 rounded bg-[#08090c] border border-[#22262f] text-[10px] text-[#5d6473]">
+                      {item.group}
+                    </span>
+                    {selected ? (
+                      <CornerDownLeft className="size-3 text-sky-400 shrink-0" aria-hidden="true" />
+                    ) : item.shortcut ? (
+                      <kbd className="px-1.5 py-0.5 rounded bg-[#08090c] border border-[#22262f] shadow-[inset_0_-1px_0_0_#1a1d25] text-[10px] font-mono text-[#858d9c]">
+                        {item.shortcut}
+                      </kbd>
+                    ) : null}
+                  </span>
                 </button>
               );
             })

@@ -7,7 +7,7 @@ export interface ModelSpecModalProps {
   onClose: () => void;
 }
 
-/** Concise engineering specification sheet for the Voigt engine and physical constraints. */
+/** Concise engineering specification sheet and keybindings reference. */
 export const ModelSpecModal: React.FC<ModelSpecModalProps> = ({ open, onClose }) => {
   useEffect(() => {
     if (!open) return;
@@ -22,35 +22,31 @@ export const ModelSpecModal: React.FC<ModelSpecModalProps> = ({ open, onClose })
 
   const specs = [
     {
-      title: 'Voigt 独立幅最適化 (Origin70互換)',
+      title: 'Voigt 最適化',
       accent: 'text-sky-300',
-      detail:
-        'ガウス幅 wG とローレンツ幅 wL に独立の vary=True を設定し、Olivero-Longbothum 式で合成半値幅 FWHM を算出します。',
+      detail: 'wG / wL 独立最適化 (vary=True), Olivero-Longbothum FWHM',
     },
     {
-      title: 'bcc211 による Bragg 幾何拘束',
+      title: 'Bragg 幾何拘束',
       accent: 'text-amber-300',
-      detail:
-        '孤立ピーク bcc211 から θ_110 = arcsin(sin(θ_211) / √3) および tan(θ_110) / tan(θ_211) 比で重畳 bcc110 を拘束します。',
+      detail: 'θ_110 = arcsin(sin(θ_211) / √3), tanθ比による半値幅拘束',
     },
     {
-      title: '局所直線 BG 減算と再現性',
+      title: '局所BG・再現性',
       accent: 'text-emerald-300',
-      detail:
-        '切り出し範囲両端10点平均を結ぶ局所直線BGを差し引き、random.seed(42) で決定論的なフィッティングを実行します。',
+      detail: '境界10点直線BG減算, seed(42) 固定による決定論的最適化',
     },
     {
-      title: '相分率・転位密度算出',
-      accent: 'text-[#eceef2]',
-      detail:
-        '多重度・構造因子・LP因子補正済みの積分強度比から f_α\' を算出し、Modified Williamson-Hall 法で転位密度 ρ を求めます。',
+      title: '相分率・転位密度',
+      accent: 'text-[#eef0f4]',
+      detail: "多重度/LP/構造因子補正による f_α' 算出, Modified W-H 転位密度",
     },
   ];
 
   const shortcuts = [
-    { keys: 'Ctrl + K', desc: 'クイック移動・コマンドパレット' },
-    { keys: 'Ctrl + B', desc: 'エクスプローラー表示切替' },
-    { keys: 'Ctrl + `', desc: '出力コンソール表示切替' },
+    { keys: 'Ctrl + K', desc: 'コマンドパレット' },
+    { keys: 'Ctrl + B', desc: 'サイドバー切替' },
+    { keys: 'Ctrl + `', desc: 'コンソール切替' },
     { keys: 'Esc', desc: 'モーダルを閉じる' },
   ];
 
@@ -58,49 +54,41 @@ export const ModelSpecModal: React.FC<ModelSpecModalProps> = ({ open, onClose })
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="解析モデル仕様"
+      aria-label="仕様・ショートカット"
       className="fixed inset-0 z-50 bg-black/65 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="max-w-2xl w-full rounded-lg bg-[#16181d] border border-[#313642] shadow-2xl overflow-hidden select-text"
+        className="max-w-xl w-full rounded-md bg-[#15181e] border border-[#303644] shadow-[0_24px_48px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(255,255,255,0.05)] overflow-hidden select-text"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-[#23262e] flex items-center justify-between bg-[#121418]">
-          <h3 className="text-sm font-semibold text-[#eceef2]">
-            解析エンジン仕様・ショートカット
-          </h3>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={onClose}
-            aria-label="閉じる"
-            className="px-1.5"
-          >
-            <X className="size-4" aria-hidden="true" />
+        <div className="px-3.5 py-2.5 border-b border-[#22262f] flex items-center justify-between bg-[#101216]">
+          <h3 className="text-[12px] font-semibold text-[#eef0f4]">モデル仕様・ショートカット</h3>
+          <Button variant="ghost" size="xs" onClick={onClose} aria-label="閉じる" className="px-1.5">
+            <X className="size-3.5" aria-hidden="true" />
           </Button>
         </div>
 
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="p-3.5 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {specs.map((item) => (
               <div
                 key={item.title}
-                className="p-3 rounded-md bg-[#0a0b0e] border border-[#23262e] space-y-1"
+                className="p-2.5 rounded-md bg-[#08090c] border border-[#22262f] space-y-1"
               >
-                <div className={`text-xs font-semibold ${item.accent}`}>{item.title}</div>
-                <p className="text-xs text-[#9ca3b0] leading-relaxed">{item.detail}</p>
+                <div className={`text-[11px] font-semibold ${item.accent}`}>{item.title}</div>
+                <div className="text-[11px] font-mono text-[#858d9c] leading-relaxed">{item.detail}</div>
               </div>
             ))}
           </div>
 
-          <div className="rounded-md bg-[#0a0b0e] border border-[#23262e] p-3">
-            <div className="text-xs font-semibold text-[#9ca3b0] mb-2">キーボードショートカット</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="rounded-md bg-[#08090c] border border-[#22262f] p-2.5">
+            <div className="text-[11px] font-medium text-[#858d9c] mb-2">ショートカット</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {shortcuts.map((sc) => (
-                <div key={sc.keys} className="flex items-center justify-between text-xs">
-                  <span className="text-[#9ca3b0]">{sc.desc}</span>
-                  <kbd className="px-1.5 py-0.5 rounded bg-[#16181d] border border-[#2a2e38] font-mono text-[11px] text-[#eceef2]">
+                <div key={sc.keys} className="flex items-center justify-between text-[11px]">
+                  <span className="text-[#98a0ae]">{sc.desc}</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-[#15181e] border border-[#262a34] shadow-[inset_0_-1px_0_0_#1a1d25] font-mono text-[10px] text-[#eef0f4]">
                     {sc.keys}
                   </kbd>
                 </div>

@@ -210,22 +210,23 @@ export const VideoUtilityTab: React.FC = () => {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
       {/* Left Extraction Controls */}
       <Panel className="lg:col-span-5">
-        <PanelHeader title="DIC フレーム抽出" />
-        <PanelBody className="space-y-4">
+        <PanelHeader title="フレーム抽出" />
+        <PanelBody className="space-y-3.5">
           <div>
-            <FieldLabel>入力モード</FieldLabel>
+            <FieldLabel>入力</FieldLabel>
             <SegmentedControl
               fullWidth
+              size="sm"
               ariaLabel="入力モード"
               value={mode}
               onChange={handleSelectMode}
               options={[
                 {
                   value: 'single',
-                  label: '単一動画',
+                  label: '単一ファイル',
                   icon: <FileVideo className="size-3.5" aria-hidden="true" />,
                   accent: 'amber',
                 },
@@ -240,9 +241,9 @@ export const VideoUtilityTab: React.FC = () => {
           </div>
 
           <div>
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <label htmlFor="dic-target-path" className="text-xs font-medium text-[#9ca3b0]">
-                {mode === 'single' ? '動画ファイル' : '動画フォルダ'}
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label htmlFor="dic-target-path" className="text-[11px] font-medium text-[#858d9c]">
+                {mode === 'single' ? '動画' : 'フォルダ'}
               </label>
               {samplePaths && (
                 <button
@@ -255,9 +256,9 @@ export const VideoUtilityTab: React.FC = () => {
                     setTargetPath(p);
                     handleInspect(p, mode, true);
                   }}
-                  className="text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors"
+                  className="text-[11px] font-medium text-sky-400 hover:text-sky-300 transition-colors"
                 >
-                  サンプル読込
+                  サンプル
                 </button>
               )}
             </div>
@@ -276,14 +277,14 @@ export const VideoUtilityTab: React.FC = () => {
               />
               <Button variant="secondary" size="sm" onClick={handleBrowseTarget}>
                 <FolderOpen className="size-3.5 text-amber-400" aria-hidden="true" />
-                <span>参照</span>
+                <span>選択</span>
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => handleInspect(targetPath, mode, false)}
                 disabled={loadingInspect || !targetPath.trim()}
-                aria-label="メタデータ再取得"
+                aria-label="再取得"
                 className="px-2"
               >
                 <RefreshCw
@@ -294,7 +295,7 @@ export const VideoUtilityTab: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-3 gap-2">
             <div>
               <FieldLabel htmlFor="dic-start-sec">開始</FieldLabel>
               <UnitNumberInput
@@ -333,9 +334,9 @@ export const VideoUtilityTab: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-3 gap-2">
             <div>
-              <FieldLabel htmlFor="dic-ext">画像形式</FieldLabel>
+              <FieldLabel htmlFor="dic-ext">形式</FieldLabel>
               <SelectInput
                 id="dic-ext"
                 mono
@@ -348,7 +349,7 @@ export const VideoUtilityTab: React.FC = () => {
             </div>
             <div className="col-span-2">
               <FieldLabel htmlFor="dic-basename">
-                {mode === 'single' ? 'ファイル接頭辞' : 'サフィックス'}
+                {mode === 'single' ? '接頭辞' : '接尾辞'}
               </FieldLabel>
               <TextInput
                 id="dic-basename"
@@ -361,23 +362,21 @@ export const VideoUtilityTab: React.FC = () => {
           </div>
 
           <div>
-            <FieldLabel htmlFor="dic-output-dir" hint="空欄で自動">
-              出力先フォルダ
-            </FieldLabel>
+            <FieldLabel htmlFor="dic-output-dir">出力先</FieldLabel>
             <div className="flex gap-1.5">
               <TextInput
                 id="dic-output-dir"
                 mono
                 value={outputDir}
                 onChange={(e) => setOutputDir(e.target.value)}
-                placeholder="動画と同階層"
+                placeholder="自動"
                 className="flex-1"
               />
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={handleBrowseOutputDir}
-                aria-label="出力先を選択"
+                aria-label="出力先"
                 className="px-2.5"
               >
                 <FolderOpen className="size-3.5" aria-hidden="true" />
@@ -393,13 +392,13 @@ export const VideoUtilityTab: React.FC = () => {
           >
             {runningExport ? (
               <>
-                <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-                <span className="tabular-nums">抽出中... {fmtFixed(progressPct, 1)}%</span>
+                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                <span className="tabular-nums">{fmtFixed(progressPct, 1)}%</span>
               </>
             ) : (
               <>
-                <Play className="size-3.5 fill-current" aria-hidden="true" />
-                <span>フレーム抽出を実行</span>
+                <Play className="size-3 fill-current" aria-hidden="true" />
+                <span>抽出実行</span>
               </>
             )}
           </Button>
@@ -409,20 +408,20 @@ export const VideoUtilityTab: React.FC = () => {
       </Panel>
 
       {/* Right Telemetry, Table & Progress */}
-      <div className="lg:col-span-7 space-y-4">
+      <div className="lg:col-span-7 space-y-3">
         <MetricStrip columns={4}>
           <MetricCell
-            label="認識動画"
+            label="動画数"
             value={inspectData ? inspectData.video_count : 0}
             unit="files"
           />
           <MetricCell
-            label="総再生時間"
+            label="再生時間"
             value={inspectData ? fmtFixed(inspectData.total_duration_sec, 2) : '0.00'}
             unit="s"
           />
           <MetricCell
-            label="フレームレート"
+            label="FPS"
             value={
               inspectData && inspectData.videos[0]
                 ? fmtFixed(inspectData.videos[0].fps, 2)
@@ -440,26 +439,26 @@ export const VideoUtilityTab: React.FC = () => {
 
         <Panel>
           <PanelHeader
-            title="動画メタデータ"
-            subtitle={`間隔 ${fmtFixed(stepSec, 2)}s (${fmtFixed(startSec, 1)}–${fmtFixed(stopSec, 1)}s)`}
+            title="メタデータ"
+            subtitle={`${fmtFixed(stepSec, 2)}s (${fmtFixed(startSec, 1)}–${fmtFixed(stopSec, 1)}s)`}
           />
           <div className="overflow-x-auto max-h-64">
-            <table className="w-full text-left border-collapse text-[13px]">
+            <table className="w-full text-left border-collapse text-[12px]">
               <thead>
-                <tr className="bg-[#121418] border-b border-[#23262e] text-xs text-[#9ca3b0]">
-                  <th className="py-2 px-3 font-medium">ファイル名</th>
+                <tr className="bg-[#101216] border-b border-[#22262f] text-[11px] text-[#858d9c]">
+                  <th className="py-2 px-3 font-medium">ファイル</th>
                   <th className="py-2 px-3 font-medium">形式</th>
                   <th className="py-2 px-3 font-medium text-right">解像度</th>
                   <th className="py-2 px-3 font-medium text-right">FPS</th>
-                  <th className="py-2 px-3 font-medium text-right">フレーム</th>
-                  <th className="py-2 px-3 font-medium text-right">時間</th>
+                  <th className="py-2 px-3 font-medium text-right">Frames</th>
+                  <th className="py-2 px-3 font-medium text-right">Duration</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1e2129] font-mono tabular-nums text-xs">
+              <tbody className="divide-y divide-[#1a1d25] font-mono tabular-nums text-[11px]">
                 {inspectData && inspectData.videos.length > 0 ? (
                   inspectData.videos.map((v) => (
-                    <tr key={v.video_path} className="hover:bg-[#1c1f26]">
-                      <td className="py-2 px-3 text-[#eceef2] font-sans font-medium">
+                    <tr key={v.video_path} className="hover:bg-[#1c2028]">
+                      <td className="py-2 px-3 text-[#eef0f4] font-sans font-medium">
                         {v.filename}
                       </td>
                       <td className="py-2 px-3">
@@ -467,13 +466,13 @@ export const VideoUtilityTab: React.FC = () => {
                           {v.extension}
                         </StatusBadge>
                       </td>
-                      <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                      <td className="py-2 px-3 text-right text-[#98a0ae]">
                         {v.width}×{v.height}
                       </td>
-                      <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                      <td className="py-2 px-3 text-right text-[#98a0ae]">
                         {fmtFixed(v.fps, 2)}
                       </td>
-                      <td className="py-2 px-3 text-right text-[#eceef2]">{v.frame_count}</td>
+                      <td className="py-2 px-3 text-right text-[#eef0f4]">{v.frame_count}</td>
                       <td className="py-2 px-3 text-right text-amber-300 font-semibold">
                         {fmtFixed(v.duration_sec, 2)} s
                       </td>
@@ -481,8 +480,8 @@ export const VideoUtilityTab: React.FC = () => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-[#636b78] font-sans">
-                      動画を選択するとメタデータが表示されます
+                    <td colSpan={6} className="py-8 text-center text-[#5d6473] font-sans">
+                      動画未選択
                     </td>
                   </tr>
                 )}
@@ -493,16 +492,16 @@ export const VideoUtilityTab: React.FC = () => {
 
         <Panel>
           <PanelHeader
-            title="抽出進捗"
+            title="進捗"
             actions={
-              <span className="text-xs font-mono tabular-nums text-amber-300 font-semibold">
+              <span className="text-[11px] font-mono tabular-nums text-amber-300 font-semibold">
                 {fmtFixed(progressPct, 1)}% ({currentCount}/
                 {totalCount || (inspectData?.expected_total_frames ?? 0)})
               </span>
             }
           />
-          <PanelBody className="space-y-3">
-            <div className="w-full h-1.5 bg-[#0a0b0e] rounded-full overflow-hidden border border-[#23262e]">
+          <PanelBody className="space-y-2.5">
+            <div className="w-full h-1.5 bg-[#08090c] rounded-full overflow-hidden border border-[#22262f]">
               <div
                 className="h-full bg-amber-400 origin-left transition-transform duration-150 ease-out"
                 style={{
@@ -512,7 +511,7 @@ export const VideoUtilityTab: React.FC = () => {
             </div>
 
             {progressDetail && (
-              <div className="text-xs font-mono tabular-nums text-[#9ca3b0] truncate">
+              <div className="text-[11px] font-mono tabular-nums text-[#858d9c] truncate">
                 {progressDetail}
               </div>
             )}
@@ -520,13 +519,9 @@ export const VideoUtilityTab: React.FC = () => {
             {exportResult && (
               <Notice tone="success">
                 <div className="font-medium">
-                  出力完了 —{' '}
-                  <span className="font-mono tabular-nums">
-                    {exportResult.saved_count ?? exportResult.total_saved_frames ?? 0}
-                  </span>{' '}
-                  枚保存
+                  完了 ({exportResult.saved_count ?? exportResult.total_saved_frames ?? 0})
                 </div>
-                <div className="text-xs font-mono text-emerald-300/80 break-all mt-0.5">
+                <div className="text-[11px] font-mono text-emerald-300/80 break-all mt-0.5">
                   {exportResult.output_dir || exportResult.output_root_dir}
                 </div>
               </Notice>

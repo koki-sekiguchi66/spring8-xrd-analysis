@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
+import { EmptyCanvas } from './ui/EmptyCanvas';
 import { Panel, PanelBody, PanelHeader } from './ui/Panel';
 import { FieldLabel, TextInput, UnitNumberInput, CheckboxRow } from './ui/Field';
 import { Disclosure } from './ui/Disclosure';
@@ -232,7 +233,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
       {/* Left Inspector Column */}
       <Panel className="lg:col-span-4">
         <PanelHeader
-          title="データ選択・前処理"
+          title="前処理"
           actions={
             preprocessResult ? (
               <StatusBadge tone="emerald" dot>
@@ -241,12 +242,12 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
             ) : undefined
           }
         />
-        <PanelBody className="space-y-4">
+        <PanelBody className="space-y-3.5">
           <div className="space-y-3">
             <div>
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <label htmlFor="specimen-folder-input" className="text-xs font-medium text-[#9ca3b0]">
-                  試料フォルダ
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <label htmlFor="specimen-folder-input" className="text-[11px] font-medium text-[#858d9c]">
+                  フォルダ
                 </label>
                 {sampleFolder && (
                   <button
@@ -256,13 +257,13 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                       setSpecimenName('Seki_age_2_tensile');
                       handleRunPreprocess(sampleFolder);
                     }}
-                    className="text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors"
+                    className="text-[11px] font-medium text-sky-400 hover:text-sky-300 transition-colors"
                   >
                     サンプル読込
                   </button>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
                 <TextInput
                   id="specimen-folder-input"
                   mono
@@ -278,13 +279,13 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                 />
                 <Button variant="secondary" size="sm" onClick={handleBrowseNative}>
                   <FolderOpen className="size-3.5 text-sky-400" aria-hidden="true" />
-                  <span>参照</span>
+                  <span>選択</span>
                 </Button>
               </div>
             </div>
 
             <div>
-              <FieldLabel htmlFor="specimen-name-input" hint="出力ファイル接頭辞">
+              <FieldLabel htmlFor="specimen-name-input">
                 試料名
               </FieldLabel>
               <TextInput
@@ -298,15 +299,15 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
           </div>
 
           <Disclosure
-            title="BG除去パラメータ"
+            title="詳細パラメータ"
             summary={`th_min ${thMin}°`}
             open={showAdvanced}
             onToggle={() => setShowAdvanced((prev) => !prev)}
           >
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2.5">
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <FieldLabel htmlFor="th-min-input">最小角度 th_min</FieldLabel>
+                  <FieldLabel htmlFor="th-min-input">th_min</FieldLabel>
                   <UnitNumberInput
                     id="th-min-input"
                     step="0.1"
@@ -320,7 +321,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                   <UnitNumberInput
                     id="spike-factor-input"
                     step="0.5"
-                    unit="×"
+                    unit="x"
                     value={spikeFactor}
                     onChange={(e) => setSpikeFactor(Number(e.target.value))}
                   />
@@ -350,7 +351,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
               <CheckboxRow
                 checked={forceRecompute}
                 onChange={setForceRecompute}
-                label="既存キャッシュ (bcg_removed_arpls) を再計算"
+                label="キャッシュ再計算"
               />
             </div>
           </Disclosure>
@@ -365,43 +366,43 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
           >
             {loading ? (
               <>
-                <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
                 <span>処理中...</span>
               </>
             ) : (
               <>
-                <Play className="size-3.5 fill-current" aria-hidden="true" />
-                <span>仕分け・BG除去を実行</span>
+                <Play className="size-3 fill-current" aria-hidden="true" />
+                <span>実行</span>
               </>
             )}
           </Button>
 
           {preprocessResult && (
-            <div className="pt-3 border-t border-[#23262e] space-y-3">
-              <div className="grid grid-cols-3 divide-x divide-[#23262e] rounded-md bg-[#0a0b0e] border border-[#23262e] text-center">
-                <div className="py-2 px-2">
-                  <div className="text-[11px] text-[#636b78]">.tth 数</div>
-                  <div className="text-sm font-mono tabular-nums font-semibold text-sky-300 mt-0.5">
+            <div className="pt-3 border-t border-[#22262f] space-y-2.5">
+              <div className="grid grid-cols-3 divide-x divide-[#22262f] rounded-md bg-[#08090c] border border-[#22262f] text-center">
+                <div className="py-1.5 px-2">
+                  <div className="text-[10px] text-[#5d6473]">.tth</div>
+                  <div className="text-[13px] font-mono tabular-nums font-semibold text-sky-300 mt-0.5">
                     {preprocessResult.separation.total_tth_count}
                   </div>
                 </div>
-                <div className="py-2 px-2">
-                  <div className="text-[11px] text-[#636b78]">範囲</div>
-                  <div className="text-sm font-mono tabular-nums font-semibold text-[#eceef2] mt-0.5">
+                <div className="py-1.5 px-2">
+                  <div className="text-[10px] text-[#5d6473]">範囲</div>
+                  <div className="text-[13px] font-mono tabular-nums font-semibold text-[#eef0f4] mt-0.5">
                     {preprocessResult.nums[0]}–{preprocessResult.nums[preprocessResult.nums.length - 1]}
                   </div>
                 </div>
-                <div className="py-2 px-2">
-                  <div className="text-[11px] text-[#636b78]">補間法</div>
-                  <div className="text-sm font-mono font-semibold text-emerald-300 mt-0.5 truncate">
+                <div className="py-1.5 px-2">
+                  <div className="text-[10px] text-[#5d6473]">補間</div>
+                  <div className="text-[13px] font-mono font-semibold text-emerald-300 mt-0.5 truncate">
                     {previewData?.method_used ?? 'PCHIP'}
                   </div>
                 </div>
               </div>
 
               <Button variant="emerald" block onClick={onProceedStep2}>
-                <span>Step 2: 初期値探索へ</span>
-                <ArrowRight className="size-4" aria-hidden="true" />
+                <span>次へ: 初期値</span>
+                <ArrowRight className="size-3.5" aria-hidden="true" />
               </Button>
             </div>
           )}
@@ -411,25 +412,25 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
       {/* Right Preview Plot Column */}
       <PlotFrame
         className="lg:col-span-8"
-        title="ベースライン除去プレビュー"
+        title="ベースライン除去"
         subtitle={
           previewData
-            ? `${previewData.filename}  #${previewData.num}  ${previewData.method_used}`
+            ? `${previewData.filename} #${previewData.num} ${previewData.method_used}`
             : undefined
         }
         toolbar={
           <CheckboxRow
             checked={zoomBaseline}
             onChange={setZoomBaseline}
-            label="ベースライン拡大 (-120〜650)"
+            label="低強度域拡大"
           />
         }
         subbar={
           availableNums.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <label
                 htmlFor="preview-num-slider"
-                className="text-xs font-medium text-[#9ca3b0] shrink-0"
+                className="text-[11px] font-medium text-[#858d9c] shrink-0"
               >
                 フレーム
               </label>
@@ -444,7 +445,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                 onKeyUp={() => handleLoadPreviewNum(selectedNum)}
                 className="flex-1 min-w-[140px] accent-sky-400"
               />
-              <span className="px-2 py-0.5 rounded bg-[#0a0b0e] border border-[#23262e] text-xs font-mono tabular-nums text-sky-300 min-w-[4rem] text-center">
+              <span className="px-2 py-0.5 rounded bg-[#08090c] border border-[#22262f] text-[11px] font-mono tabular-nums text-sky-300 min-w-[3.5rem] text-center">
                 #{selectedNum}
               </span>
               <div className="flex items-center gap-1 flex-wrap">
@@ -455,10 +456,10 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                       key={n}
                       type="button"
                       onClick={() => handleLoadPreviewNum(n)}
-                      className={`h-6 px-2 rounded text-xs font-mono tabular-nums border transition-colors ${
+                      className={`h-6 px-2 rounded text-[11px] font-mono tabular-nums border transition-colors ${
                         selectedNum === n
                           ? 'bg-sky-500/15 border-sky-500/50 text-sky-300 font-semibold'
-                          : 'bg-[#0a0b0e] border-[#23262e] text-[#9ca3b0] hover:text-[#eceef2]'
+                          : 'bg-[#08090c] border-[#22262f] text-[#858d9c] hover:text-[#eef0f4]'
                       }`}
                     >
                       #{n}
@@ -471,33 +472,28 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
       >
         <div className="relative min-h-[480px]">
           {previewLoading && (
-            <div className="absolute inset-0 z-10 bg-[#0a0b0e]/75 flex items-center justify-center text-xs font-mono text-sky-300">
+            <div className="absolute inset-0 z-10 bg-[#08090c]/80 flex items-center justify-center text-[11px] font-mono text-sky-300">
               Loading #{selectedNum}...
             </div>
           )}
           {previewData ? (
             <PlotlyChart data={plotTraces} layout={plotLayout} className="w-full h-[500px]" />
           ) : (
-            <div className="h-[500px] flex flex-col items-center justify-center text-center p-6 space-y-3">
-              <FileSpreadsheet className="size-9 text-[#313642]" aria-hidden="true" />
-              <div className="text-[13px] text-[#9ca3b0]">
-                フォルダを指定して前処理を実行すると波形が表示されます
-              </div>
-              {sampleFolder && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setFolderPath(sampleFolder);
-                    setSpecimenName('Seki_age_2_tensile');
-                    handleRunPreprocess(sampleFolder);
-                  }}
-                >
-                  <Play className="size-3.5 fill-current text-sky-400" aria-hidden="true" />
-                  <span>サンプルデータで実行 (Seki_age_2_tensile)</span>
-                </Button>
-              )}
-            </div>
+            <EmptyCanvas
+              className="h-[500px]"
+              label="データ未読込"
+              actionLabel={sampleFolder ? 'サンプル読込' : undefined}
+              actionIcon={<Play className="size-3 fill-current text-sky-400" />}
+              onAction={
+                sampleFolder
+                  ? () => {
+                      setFolderPath(sampleFolder);
+                      setSpecimenName('Seki_age_2_tensile');
+                      handleRunPreprocess(sampleFolder);
+                    }
+                  : undefined
+              }
+            />
           )}
         </div>
       </PlotFrame>

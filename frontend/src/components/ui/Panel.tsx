@@ -6,12 +6,13 @@ export interface PanelProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const TONE_CLASSES = {
-  surface: 'bg-[#16181d] border border-[#23262e]',
-  inset: 'bg-[#0a0b0e] border border-[#23262e]',
-  chrome: 'bg-[#121418] border border-[#23262e]',
+  surface:
+    'bg-[#15181e] border border-[#22262f] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.035)]',
+  inset: 'bg-[#08090c] border border-[#1f232c]',
+  chrome: 'bg-[#101216] border border-[#22262f]',
 };
 
-/** Primary structural container with hairline borders and calibrated surface depth. */
+/** Primary machined container with subtle specular top edge and hairline borders. */
 export const Panel: React.FC<PanelProps> = ({
   tone = 'surface',
   className,
@@ -19,7 +20,7 @@ export const Panel: React.FC<PanelProps> = ({
   ...rest
 }) => {
   return (
-    <div className={cn('rounded-lg', TONE_CLASSES[tone], className)} {...rest}>
+    <div className={cn('rounded-md', TONE_CLASSES[tone], className)} {...rest}>
       {children}
     </div>
   );
@@ -31,7 +32,7 @@ export interface PanelHeaderProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   actions?: React.ReactNode;
 }
 
-/** Compact single-line or two-line header bar for Panels. */
+/** Compact header strip for Panels. */
 export const PanelHeader: React.FC<PanelHeaderProps> = ({
   title,
   subtitle,
@@ -42,16 +43,22 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
   return (
     <div
       className={cn(
-        'px-4 py-2.5 border-b border-[#23262e] flex flex-wrap items-center justify-between gap-2.5',
+        'px-3.5 py-2 border-b border-[#22262f] flex flex-wrap items-center justify-between gap-2',
         className
       )}
       {...rest}
     >
-      <div className="min-w-0">
-        <div className="text-[13px] font-semibold text-[#eceef2] truncate">{title}</div>
-        {subtitle && <div className="text-xs text-[#9ca3b0] truncate mt-0.5">{subtitle}</div>}
+      <div className="flex items-baseline gap-2 min-w-0">
+        <div className="text-[12px] font-semibold tracking-tight text-[#eef0f4] truncate">
+          {title}
+        </div>
+        {subtitle && (
+          <div className="text-[11px] font-mono tabular-nums text-[#5d6473] truncate">
+            {subtitle}
+          </div>
+        )}
       </div>
-      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+      {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
     </div>
   );
 };
@@ -63,7 +70,7 @@ export const PanelBody: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   ...rest
 }) => {
   return (
-    <div className={cn('p-4', className)} {...rest}>
+    <div className={cn('p-3.5', className)} {...rest}>
       {children}
     </div>
   );

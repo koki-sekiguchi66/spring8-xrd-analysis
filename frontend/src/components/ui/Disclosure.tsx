@@ -11,7 +11,7 @@ export interface DisclosureProps {
   className?: string;
 }
 
-/** Compact property-inspector disclosure panel. */
+/** Compact collapsible inspector tray. */
 export const Disclosure: React.FC<DisclosureProps> = ({
   title,
   summary,
@@ -21,24 +21,24 @@ export const Disclosure: React.FC<DisclosureProps> = ({
   className,
 }) => {
   return (
-    <div className={cn('rounded-lg bg-[#0a0b0e] border border-[#23262e] overflow-hidden', className)}>
+    <div className={cn('rounded-md bg-[#08090c] border border-[#22262f] overflow-hidden', className)}>
       <button
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="w-full h-9 px-3 flex items-center justify-between gap-2 text-[13px] font-medium text-[#eceef2] hover:bg-[#16181d] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
+        className="w-full h-8 px-2.5 flex items-center justify-between gap-2 text-[12px] font-medium text-[#eef0f4] hover:bg-[#15181e] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/70"
       >
-        <span className="flex items-center gap-2 min-w-0 truncate">
+        <span className="flex items-center gap-1.5 min-w-0 truncate">
           {open ? (
-            <ChevronDown className="size-3.5 text-[#9ca3b0] shrink-0" aria-hidden="true" />
+            <ChevronDown className="size-3.5 text-[#858d9c] shrink-0" aria-hidden="true" />
           ) : (
-            <ChevronRight className="size-3.5 text-[#9ca3b0] shrink-0" aria-hidden="true" />
+            <ChevronRight className="size-3.5 text-[#858d9c] shrink-0" aria-hidden="true" />
           )}
           <span className="truncate">{title}</span>
         </span>
-        {summary && <span className="text-xs font-mono text-[#636b78] shrink-0">{summary}</span>}
+        {summary && <span className="text-[11px] font-mono text-[#5d6473] shrink-0">{summary}</span>}
       </button>
-      {open && <div className="p-3 border-t border-[#23262e] bg-[#121418]">{children}</div>}
+      {open && <div className="p-2.5 border-t border-[#22262f] bg-[#101216]">{children}</div>}
     </div>
   );
 };

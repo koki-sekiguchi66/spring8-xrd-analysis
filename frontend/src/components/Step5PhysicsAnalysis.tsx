@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
-  Calculator,
   FolderOpen,
   Play,
   Sliders,
@@ -12,6 +11,7 @@ import { apiPost, fmtFixed, fmtSci } from '../lib/utils';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
 import { Disclosure } from './ui/Disclosure';
+import { EmptyCanvas } from './ui/EmptyCanvas';
 import { FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
 import { MetricCell, MetricStrip } from './ui/MetricStrip';
 import { Notice } from './ui/Notice';
@@ -50,23 +50,27 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
 
   const handleBrowseExcel = async () => {
     try {
-      const res = await apiPost<{ path?: string }>('/api/dialog/select', {
-        mode: 'excel_file',
-        title: '解析済みの output.xlsx ファイルを選択',
-        initial_dir: folderPath || undefined,
-      });
-      if (res.path) {
-        setExcelPath(res.path);
+      const res = await apiPost<{ selected_path?: string; path?: string; cancelled?: boolean }>(
+        '/api/dialog/select',
+        {
+          mode: 'excel_file',
+          title: 'Excel 選択',
+          initial_dir: folderPath || undefined,
+        }
+      );
+      const picked = res.selected_path || res.path;
+      if (!res.cancelled && picked) {
+        setExcelPath(picked);
       }
     } catch (e: any) {
-      setErrorMsg(e.message || 'ファイル選択に失敗しました');
+      setErrorMsg(e.message || '選択エラー');
     }
   };
 
   const handleRunAnalysis = async (overrideExcel?: string) => {
     const targetExcel = (overrideExcel !== undefined ? overrideExcel : excelPath).trim();
     if (!targetExcel && !hasSessionGroups && !folderPath) {
-      setErrorMsg('解析対象のデータがありません。Step 3 を実行するか、output.xlsx を指定してください。');
+      setErrorMsg('対象データ未指定 (Step 3 実行または output.xlsx 指定が必要)');
       return;
     }
     setIsRunning(true);
@@ -83,7 +87,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       });
       setResult(res);
     } catch (e: any) {
-      setErrorMsg(e.message || '物理量解析に失敗しました');
+      setErrorMsg(e.message || '計算エラー');
     } finally {
       setIsRunning(false);
     }
@@ -157,7 +161,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         y: result.kinetics_fit.fitted_curve.map((v) => v * 100),
         type: 'scatter',
         mode: 'lines',
-        name: `Olson-Cohen Fit (n=${fmtFixed(result.kinetics_fit.n, 2)})`,
+        name: `Olson-Cohen (n=${fmtFixed(result.kinetics_fit.n, 2)})`,
         line: { color: '#34d399', width: 1.8, dash: 'dash' },
       });
     }
@@ -173,7 +177,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         y: result.rho_gamma_m2,
         type: 'scatter',
         mode: 'lines+markers',
-        name: '平均 ρ_γ [m^-2]',
+        name: '平均 ρ_γ',
         line: { color: '#38bdf8', width: 2 },
         marker: { size: 5, color: '#38bdf8' },
       },
@@ -182,7 +186,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         y: result.rho_alpha_prime_m2,
         type: 'scatter',
         mode: 'lines+markers',
-        name: "平均 ρ_α' [m^-2]",
+        name: "平均 ρ_α'",
         line: { color: '#f59e0b', width: 2 },
         marker: { size: 5, color: '#f59e0b' },
       },
@@ -194,7 +198,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
           y: series,
           type: 'scatter',
           mode: 'lines',
-          name: `ρ (${pk})`,
+          name: pk,
           line: {
             color: PEAK_COLORS[idx % PEAK_COLORS.length],
             width: 1.25,
@@ -252,61 +256,64 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
 
   return (
     <div className="space-y-3">
-      {/* Top Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#121418] border border-[#23262e] rounded-md px-3 py-2">
-        <SegmentedControl<PhysicsSubView>
-          ariaLabel="物理量解析ビュー"
-          value={activeSubView}
-          onChange={setActiveSubView}
-          options={[
-            { value: 'phase_fraction', label: "相分率 (f_α', f_γ)", accent: 'amber' },
-            { value: 'dislocation', label: '転位密度 (WH / ρ)', accent: 'sky' },
-            { value: 'lattice_strain', label: '格子ひずみ・定数', accent: 'emerald' },
-            { value: 'table', label: 'データ一覧', icon: <TableIcon className="w-3.5 h-3.5" /> },
-          ]}
-        />
+      {/* Toolbar */}
+      <Panel>
+        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
+          <SegmentedControl<PhysicsSubView>
+            ariaLabel="解析ビュー"
+            size="sm"
+            value={activeSubView}
+            onChange={setActiveSubView}
+            options={[
+              { value: 'phase_fraction', label: '相分率', accent: 'amber' },
+              { value: 'dislocation', label: '転位密度', accent: 'sky' },
+              { value: 'lattice_strain', label: '格子ひずみ', accent: 'emerald' },
+              { value: 'table', label: 'テーブル', icon: <TableIcon className="w-3.5 h-3.5" /> },
+            ]}
+          />
 
-        <div className="flex flex-wrap items-center gap-2">
-          {hasSessionGroups && !excelPath && (
-            <StatusBadge tone="emerald" dot>
-              セッション結果を直接参照
-            </StatusBadge>
-          )}
-          <div className="flex items-center gap-1.5">
-            <div className="w-60">
-              <TextInput
-                mono
-                value={excelPath}
-                onChange={(e) => setExcelPath(e.target.value)}
-                placeholder="output.xlsx パス（任意）"
-              />
+          <div className="flex flex-wrap items-center gap-2">
+            {hasSessionGroups && !excelPath && (
+              <StatusBadge tone="emerald" dot>
+                セッション
+              </StatusBadge>
+            )}
+            <div className="flex items-center gap-1.5">
+              <div className="w-56">
+                <TextInput
+                  mono
+                  value={excelPath}
+                  onChange={(e) => setExcelPath(e.target.value)}
+                  placeholder="output.xlsx（任意）"
+                />
+              </div>
+              <Button variant="secondary" size="sm" onClick={handleBrowseExcel} title="選択">
+                <FolderOpen className="w-3.5 h-3.5" />
+              </Button>
             </div>
-            <Button variant="secondary" size="sm" onClick={handleBrowseExcel} title="Excelファイルを選択">
-              <FolderOpen className="w-3.5 h-3.5" />
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => handleRunAnalysis()}
+              disabled={isRunning}
+            >
+              <Play className="w-3 h-3 fill-current" />
+              <span>{isRunning ? '計算中...' : '計算'}</span>
             </Button>
           </div>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => handleRunAnalysis()}
-            disabled={isRunning}
-          >
-            <Play className="w-3.5 h-3.5" />
-            <span>{isRunning ? '計算中...' : '物性値を計算'}</span>
-          </Button>
         </div>
-      </div>
+      </Panel>
 
-      {/* Calibration Parameters Disclosure */}
+      {/* Calibration Disclosure */}
       <Disclosure
-        title="物理定数・装置分解能設定"
-        summary={`FWHM_inst=${instrumentalFwhm}° · a_γ0=${aGamma0}nm · a_α'0=${aAlpha0}nm`}
+        title="装置・基準定数"
+        summary={`FWHM_inst ${instrumentalFwhm}° · a_γ0 ${aGamma0}nm · a_α'0 ${aAlpha0}nm`}
         open={showAdvancedParams}
         onToggle={() => setShowAdvancedParams((v) => !v)}
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
           <div>
-            <FieldLabel hint="装置由来半値幅">装置分解能 FWHM_inst</FieldLabel>
+            <FieldLabel>FWHM_inst</FieldLabel>
             <UnitNumberInput
               unit="deg"
               step="0.001"
@@ -315,7 +322,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
           <div>
-            <FieldLabel hint="無ひずみオーステナイト基準格子定数">a_γ0</FieldLabel>
+            <FieldLabel>a_γ0</FieldLabel>
             <UnitNumberInput
               unit="nm"
               step="0.0001"
@@ -324,7 +331,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
           <div>
-            <FieldLabel hint="無ひずみマルテンサイト基準格子定数">a_α'0</FieldLabel>
+            <FieldLabel>a_α&apos;0</FieldLabel>
             <UnitNumberInput
               unit="nm"
               step="0.0001"
@@ -340,30 +347,30 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       {/* KPI Strip */}
       <MetricStrip columns={4}>
         <MetricCell
-          label="最大 α' 相分率"
+          label="最大 f_α'"
           value={kpiStats.maxAlphaPct !== null ? fmtFixed(kpiStats.maxAlphaPct, 2) : '—'}
           unit="%"
           tone="amber"
           meta={
             result?.kinetics_fit
-              ? `fs=${fmtFixed(result.kinetics_fit.fs, 2)}, n=${fmtFixed(result.kinetics_fit.n, 2)}`
+              ? `fs=${fmtFixed(result.kinetics_fit.fs, 2)} · n=${fmtFixed(result.kinetics_fit.n, 2)}`
               : undefined
           }
         />
         <MetricCell
-          label="最大 γ 転位密度"
+          label="最大 ρ_γ"
           value={kpiStats.maxRhoGamma !== null ? fmtSci(kpiStats.maxRhoGamma, 2) : '—'}
           unit="m^-2"
           tone="sky"
         />
         <MetricCell
-          label="最大 α' 転位密度"
+          label="最大 ρ_α'"
           value={kpiStats.maxRhoAlpha !== null ? fmtSci(kpiStats.maxRhoAlpha, 2) : '—'}
           unit="m^-2"
           tone="amber"
         />
         <MetricCell
-          label="X線波長 λ"
+          label="波長 λ"
           value={result?.wavelength_nm ? fmtFixed(result.wavelength_nm, 5) : '—'}
           unit="nm"
           tone="emerald"
@@ -372,24 +379,23 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       </MetricStrip>
 
       {!result ? (
-        <Panel className="p-8 text-center">
-          <div className="inline-flex items-center justify-center w-9 h-9 rounded-md bg-[#1c1f26] border border-[#23262e] mb-2">
-            <Calculator className="w-4 h-4 text-[#38bdf8]" />
-          </div>
-          <p className="text-[12px] text-[#b4b9c4]">
-            「物性値を計算」を実行すると、直接比較法による相分率・Williamson-Hall転位密度・格子ひずみが算出されます。
-          </p>
-        </Panel>
+        <EmptyCanvas
+          className="h-64"
+          label="計算待機中"
+          actionLabel="物性値を計算"
+          actionIcon={<Play className="w-3 h-3 fill-current text-sky-400" />}
+          onAction={() => handleRunAnalysis()}
+        />
       ) : (
         <>
           {activeSubView === 'phase_fraction' && (
             <PlotFrame
-              title="マルテンサイト変態相分率 (f_α' / f_γ)"
-              subtitle="直接比較法 (Direct Comparison Method)"
+              title="相分率推移"
+              subtitle="Direct Comparison Method"
               toolbar={
                 result.kinetics_fit ? (
                   <StatusBadge tone="emerald" mono>
-                    Olson-Cohen n={fmtFixed(result.kinetics_fit.n, 2)} · β={fmtSci(result.kinetics_fit.beta, 2)}
+                    n={fmtFixed(result.kinetics_fit.n, 2)} · β={fmtSci(result.kinetics_fit.beta, 2)}
                   </StatusBadge>
                 ) : null
               }
@@ -397,9 +403,9 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
               <PlotlyChart
                 data={phaseFractionTraces}
                 layout={{
-                  xaxis: { title: 'フレーム番号' },
-                  yaxis: { title: '相分率 [%]', range: [0, 105] },
-                  margin: { t: 18, r: 18, b: 46, l: 56 },
+                  xaxis: { title: '#' },
+                  yaxis: { title: 'Fraction [%]', range: [0, 105] },
+                  margin: { t: 16, r: 16, b: 40, l: 54 },
                 }}
                 className="w-full h-[420px]"
               />
@@ -408,16 +414,16 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
 
           {activeSubView === 'dislocation' && (
             <PlotFrame
-              title="転位密度推移 (ρ_γ / ρ_α')"
-              subtitle="Modified Williamson-Hall / Smallman法"
-              toolbar={<Activity className="w-3.5 h-3.5 text-[#38bdf8]" />}
+              title="転位密度推移"
+              subtitle="Modified Williamson-Hall"
+              toolbar={<Activity className="w-3.5 h-3.5 text-sky-400" />}
             >
               <PlotlyChart
                 data={dislocationTraces}
                 layout={{
-                  xaxis: { title: 'フレーム番号' },
-                  yaxis: { title: '転位密度 ρ [m^-2]', type: 'log' },
-                  margin: { t: 18, r: 18, b: 46, l: 64 },
+                  xaxis: { title: '#' },
+                  yaxis: { title: 'ρ [m^-2]', type: 'log' },
+                  margin: { t: 16, r: 16, b: 40, l: 62 },
                 }}
                 className="w-full h-[420px]"
               />
@@ -427,29 +433,25 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
           {activeSubView === 'lattice_strain' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <PlotFrame
-                title="弾性格子ひずみ推移 (ε)"
-                subtitle="基準格子定数からの相対シフト"
-                toolbar={<Sliders className="w-3.5 h-3.5 text-[#34d399]" />}
+                title="弾性格子ひずみ (ε)"
+                toolbar={<Sliders className="w-3.5 h-3.5 text-emerald-400" />}
               >
                 <PlotlyChart
                   data={latticeStrainTraces}
                   layout={{
-                    xaxis: { title: 'フレーム番号' },
-                    yaxis: { title: '格子ひずみ [με]' },
-                    margin: { t: 18, r: 18, b: 46, l: 58 },
+                    xaxis: { title: '#' },
+                    yaxis: { title: 'Strain [με]' },
+                    margin: { t: 16, r: 16, b: 40, l: 56 },
                   }}
                   className="w-full h-[380px]"
                 />
               </PlotFrame>
 
-              <PlotFrame
-                title="見かけ格子定数推移 (a_γ / a_α')"
-                subtitle="Bragg角から逆算"
-              >
+              <PlotFrame title="格子定数 (a_γ / a_α')">
                 <PlotlyChart
                   data={latticeConstantTraces}
                   layout={{
-                    xaxis: { title: 'フレーム番号' },
+                    xaxis: { title: '#' },
                     yaxis: { title: 'a_γ [nm]', side: 'left' },
                     yaxis2: {
                       title: "a_α' [nm]",
@@ -457,7 +459,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
                       overlaying: 'y',
                       gridcolor: 'transparent',
                     },
-                    margin: { t: 18, r: 58, b: 46, l: 58 },
+                    margin: { t: 16, r: 56, b: 40, l: 56 },
                   }}
                   className="w-full h-[380px]"
                 />
@@ -469,27 +471,27 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             <Panel>
               <div className="max-h-[460px] overflow-auto">
                 <table className="w-full text-[11px] font-mono tabular-nums border-collapse">
-                  <thead className="sticky top-0 bg-[#121418] border-b border-[#23262e] text-[#787f90]">
+                  <thead className="sticky top-0 bg-[#101216] border-b border-[#22262f] text-[#858d9c]">
                     <tr>
                       <th className="text-left px-3 py-2 font-medium">#</th>
-                      <th className="text-right px-3 py-2 font-medium">f_α' [%]</th>
+                      <th className="text-right px-3 py-2 font-medium">f_α&apos; [%]</th>
                       <th className="text-right px-3 py-2 font-medium">f_γ [%]</th>
                       <th className="text-right px-3 py-2 font-medium">ρ_γ [m^-2]</th>
-                      <th className="text-right px-3 py-2 font-medium">ρ_α' [m^-2]</th>
+                      <th className="text-right px-3 py-2 font-medium">ρ_α&apos; [m^-2]</th>
                       <th className="text-right px-3 py-2 font-medium">a_γ [nm]</th>
-                      <th className="text-right px-3 py-2 font-medium">a_α' [nm]</th>
+                      <th className="text-right px-3 py-2 font-medium">a_α&apos; [nm]</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#1a1d24]">
+                  <tbody className="divide-y divide-[#1a1d25]">
                     {result.summary_rows.map((row) => (
-                      <tr key={String(row.num)} className="hover:bg-[#1c1f26] text-[#b4b9c4]">
-                        <td className="px-3 py-1.5 text-[#eceef2]">{row.num}</td>
-                        <td className="px-3 py-1.5 text-right text-[#f59e0b]">
+                      <tr key={String(row.num)} className="hover:bg-[#1c2028] text-[#98a0ae]">
+                        <td className="px-3 py-1.5 text-[#eef0f4]">{row.num}</td>
+                        <td className="px-3 py-1.5 text-right text-amber-300">
                           {row.f_alpha_prime !== null && row.f_alpha_prime !== undefined
                             ? fmtFixed(row.f_alpha_prime * 100, 2)
                             : '—'}
                         </td>
-                        <td className="px-3 py-1.5 text-right text-[#38bdf8]">
+                        <td className="px-3 py-1.5 text-right text-sky-300">
                           {row.f_gamma !== null && row.f_gamma !== undefined
                             ? fmtFixed(row.f_gamma * 100, 2)
                             : '—'}

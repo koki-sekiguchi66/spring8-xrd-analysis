@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
+import { EmptyCanvas } from './ui/EmptyCanvas';
 import { Panel, PanelBody, PanelHeader } from './ui/Panel';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { PlotFrame } from './ui/PlotFrame';
@@ -331,22 +332,23 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
     <div className="space-y-4">
       {/* Compact Action & View Toolbar */}
       <Panel>
-        <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <SegmentedControl
               ariaLabel="表示切替"
+              size="sm"
               value={subScreen}
               onChange={setSubScreen}
               options={[
                 {
                   value: 'config',
-                  label: 'エンジン・拘束設定',
+                  label: '設定',
                   icon: <Sliders className="size-3.5" aria-hidden="true" />,
                   accent: 'sky',
                 },
                 {
                   value: 'monitor',
-                  label: 'ライブモニター',
+                  label: 'モニター',
                   icon: <LineChart className="size-3.5" aria-hidden="true" />,
                   accent: 'sky',
                 },
@@ -354,12 +356,12 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
             />
 
             {savedOutputPath ? (
-              <span className="text-xs font-mono text-emerald-300 truncate max-w-md">
-                保存済: {savedOutputPath}
+              <span className="text-[11px] font-mono text-emerald-300 truncate max-w-md">
+                {savedOutputPath}
               </span>
             ) : initialExcelPath ? (
-              <span className="text-xs font-mono text-[#636b78] truncate max-w-md">
-                初期値: {initialExcelPath}
+              <span className="text-[11px] font-mono text-[#5d6473] truncate max-w-md">
+                {initialExcelPath}
               </span>
             ) : null}
           </div>
@@ -374,19 +376,19 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
               {running ? (
                 <>
                   <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
-                  <span>解析実行中...</span>
+                  <span>実行中...</span>
                 </>
               ) : (
                 <>
-                  <Play className="size-3.5 fill-current" aria-hidden="true" />
-                  <span>連続解析を実行 ({batchConfigs.length})</span>
+                  <Play className="size-3 fill-current" aria-hidden="true" />
+                  <span>一括実行 ({batchConfigs.length})</span>
                 </>
               )}
             </Button>
 
             {completedAll && (
               <Button variant="emerald" size="sm" onClick={onProceedStep4}>
-                <span>Step 4: 修復・出力へ</span>
+                <span>次へ: 検証</span>
                 <ArrowRight className="size-3.5" aria-hidden="true" />
               </Button>
             )}
@@ -437,9 +439,11 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
       {subScreen === 'config' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
           {batchConfigs.length === 0 ? (
-            <Panel className="md:col-span-2 p-8 text-center text-[13px] text-[#9ca3b0]">
-              Step 2 で初期値ピークを選択すると解析設定が表示されます
-            </Panel>
+            <EmptyCanvas
+              className="md:col-span-2 h-72"
+              label="グループ未選択"
+              meta="Step 2"
+            />
           ) : (
             batchConfigs.map((cfg) => {
               const isExpanded = expandedGroupId === cfg.group_id;
@@ -723,9 +727,9 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
       {/* SUB-SCREEN 2: Real-Time Waveform & Trend Monitor */}
       {subScreen === 'monitor' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-          <PlotFrame
+            <PlotFrame
             className="lg:col-span-5"
-            title="ライブ波形フィット"
+            title="波形フィット"
             subtitle={liveWaveform ? `#${liveWaveform.num} (${liveWaveform.filename})` : undefined}
           >
             {liveWaveform ? (
@@ -739,9 +743,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                 className="w-full h-[460px]"
               />
             ) : (
-              <div className="h-[460px] flex items-center justify-center text-[13px] text-[#636b78]">
-                連続解析を実行すると処理中の波形が表示されます
-              </div>
+              <EmptyCanvas className="h-[460px]" label="実行待機中" />
             )}
           </PlotFrame>
 

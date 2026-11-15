@@ -3,12 +3,12 @@ import {
   Activity,
   BarChart3,
   BookOpen,
-  CheckCircle2,
-  ChevronRight,
+  Check,
   Command,
   FileSpreadsheet,
   Film,
   Folder,
+  FolderOpen,
   HelpCircle,
   Layers,
   PanelBottom,
@@ -33,7 +33,6 @@ import { Step5PhysicsAnalysis } from './components/Step5PhysicsAnalysis';
 import { VideoUtilityTab } from './components/VideoUtilityTab';
 import { CommandItem, CommandPalette } from './components/ui/CommandPalette';
 import { SegmentedControl } from './components/ui/SegmentedControl';
-import { StatusBadge } from './components/ui/StatusBadge';
 
 type MainMode = 'xrd' | 'dic';
 type XrdStep = 1 | 2 | 3 | 4 | 5;
@@ -84,7 +83,6 @@ export const App: React.FC = () => {
     ]);
   }, []);
 
-  // Global keyboard shortcuts: Ctrl+K (palette), Ctrl+B (sidebar), Ctrl+` (console)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -104,7 +102,6 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Close dropdown menu when clicking outside
   useEffect(() => {
     if (!openMenu) return;
     const close = () => setOpenMenu(null);
@@ -127,48 +124,43 @@ export const App: React.FC = () => {
     () => [
       {
         step: 1 as XrdStep,
-        short: '前処理',
-        title: '1. データ前処理・平滑化',
+        label: '前処理',
         done: Boolean(preprocessResult),
-        badgeText: preprocessResult ? '済' : '待機',
-        badgeTone: preprocessResult ? ('emerald' as const) : ('neutral' as const),
+        indicator: preprocessResult ? ('done' as const) : null,
       },
       {
         step: 2 as XrdStep,
-        short: '初期値決定',
-        title: '2. 初期値・グループ決定',
+        label: '初期値',
         done: batchConfigs.length > 0 || Boolean(initialData),
-        badgeText: batchConfigs.length > 0 ? `${batchConfigs.length}群` : initialData ? '検出済' : '待機',
-        badgeTone: batchConfigs.length > 0 ? ('sky' as const) : ('neutral' as const),
+        indicator:
+          batchConfigs.length > 0
+            ? (`${batchConfigs.length}` as const)
+            : initialData
+              ? ('done' as const)
+              : null,
       },
       {
         step: 3 as XrdStep,
-        short: '一括Fit',
-        title: '3. 全ファイル一括フィッティング',
+        label: '一括Fit',
         done: hasBatchResults,
-        badgeText: hasBatchResults ? '完了' : '待機',
-        badgeTone: hasBatchResults ? ('emerald' as const) : ('neutral' as const),
+        indicator: hasBatchResults ? ('done' as const) : null,
       },
       {
         step: 4 as XrdStep,
-        short: '検証・出力',
-        title: '4. 外れ値修正・Excel出力',
+        label: '検証・出力',
         done: false,
-        badgeText: totalOutlierCount > 0 ? `外${totalOutlierCount}` : hasBatchResults ? '正常' : '待機',
-        badgeTone:
+        indicator:
           totalOutlierCount > 0
-            ? ('amber' as const)
+            ? (`外${totalOutlierCount}` as const)
             : hasBatchResults
-              ? ('emerald' as const)
-              : ('neutral' as const),
+              ? ('done' as const)
+              : null,
       },
       {
         step: 5 as XrdStep,
-        short: '物理量',
-        title: '5. 相分率・転位密度解析',
+        label: '物理量',
         done: false,
-        badgeText: hasBatchResults ? '実行可' : '任意',
-        badgeTone: hasBatchResults ? ('sky' as const) : ('neutral' as const),
+        indicator: null,
       },
     ],
     [preprocessResult, initialData, batchConfigs.length, hasBatchResults, totalOutlierCount]
@@ -176,14 +168,18 @@ export const App: React.FC = () => {
 
   const handleSelectFolderQuick = async () => {
     try {
-      const res = await apiPost<{ path?: string }>('/api/dialog/select', {
-        mode: 'folder',
-        title: 'XRDデータフォルダを選択',
-        initial_dir: folderPath || undefined,
-      });
-      if (res.path) {
-        setFolderPath(res.path);
-        appendLog(`フォルダ選択: ${res.path}`);
+      const res = await apiPost<{ selected_path?: string; path?: string; cancelled?: boolean }>(
+        '/api/dialog/select',
+        {
+          mode: 'folder',
+          title: 'フォルダ選択',
+          initial_dir: folderPath || undefined,
+        }
+      );
+      const picked = res.selected_path || res.path;
+      if (!res.cancelled && picked) {
+        setFolderPath(picked);
+        appendLog(`フォルダ選択: ${picked}`);
       }
     } catch (e: any) {
       appendLog(`フォルダ選択エラー: ${e.message}`, 'error');
@@ -193,7 +189,7 @@ export const App: React.FC = () => {
   const handleCheckHealth = async () => {
     try {
       const res = await apiGet<{ status: string; version?: string }>('/api/health');
-      appendLog(`Backend API: ${res.status}${res.version ? ` (v${res.version})` : ''}`);
+      appendLog(`API: ${res.status}${res.version ? ` v${res.version}` : ''}`);
       setShowConsole(true);
     } catch (e: any) {
       appendLog(`Health check failed: ${e.message}`, 'error');
@@ -204,7 +200,7 @@ export const App: React.FC = () => {
   const handleProceedStep2 = useCallback(() => {
     setMainMode('xrd');
     setXrdStep(2);
-    appendLog(`Step 2 (初期値決定) へ移動${folderPath ? `: ${folderPath}` : ''}`);
+    appendLog(`Step 2${folderPath ? `: ${folderPath}` : ''}`);
   }, [folderPath, appendLog]);
 
   const handleConfirmInitialAndProceed = useCallback(
@@ -215,7 +211,7 @@ export const App: React.FC = () => {
       }
       setMainMode('xrd');
       setXrdStep(3);
-      appendLog(`Step 3 (一括フィッティング) へ移動 (${configs.length} グループ)`);
+      appendLog(`Step 3 (${configs.length} groups)`);
     },
     [appendLog]
   );
@@ -223,21 +219,21 @@ export const App: React.FC = () => {
   const handleProceedStep4 = useCallback(() => {
     setMainMode('xrd');
     setXrdStep(4);
-    appendLog('Step 4 (波形検証・Excel出力) へ移動');
+    appendLog('Step 4');
   }, [appendLog]);
 
   const handleProceedStep5 = useCallback(() => {
     setMainMode('xrd');
     setXrdStep(5);
-    appendLog('Step 5 (物理量・転位密度解析) へ移動');
+    appendLog('Step 5');
   }, [appendLog]);
 
   const commandItems: CommandItem[] = useMemo(
     () => [
       {
         id: 'step-1',
-        label: 'Step 1: データ前処理・平滑化を開く',
-        group: 'ナビゲーション',
+        label: '1 前処理',
+        group: '移動',
         shortcut: '1',
         icon: <Folder className="w-3.5 h-3.5" />,
         onSelect: () => {
@@ -247,8 +243,8 @@ export const App: React.FC = () => {
       },
       {
         id: 'step-2',
-        label: 'Step 2: 初期値・グループ決定を開く',
-        group: 'ナビゲーション',
+        label: '2 初期値',
+        group: '移動',
         shortcut: '2',
         icon: <Layers className="w-3.5 h-3.5" />,
         onSelect: () => {
@@ -258,8 +254,8 @@ export const App: React.FC = () => {
       },
       {
         id: 'step-3',
-        label: 'Step 3: 一括フィッティングを開く',
-        group: 'ナビゲーション',
+        label: '3 一括Fit',
+        group: '移動',
         shortcut: '3',
         icon: <PlayCircle className="w-3.5 h-3.5" />,
         onSelect: () => {
@@ -269,8 +265,8 @@ export const App: React.FC = () => {
       },
       {
         id: 'step-4',
-        label: 'Step 4: 外れ値修正・Excel出力を開く',
-        group: 'ナビゲーション',
+        label: '4 検証・出力',
+        group: '移動',
         shortcut: '4',
         icon: <FileSpreadsheet className="w-3.5 h-3.5" />,
         onSelect: () => {
@@ -280,8 +276,8 @@ export const App: React.FC = () => {
       },
       {
         id: 'step-5',
-        label: 'Step 5: 相分率・転位密度解析を開く',
-        group: 'ナビゲーション',
+        label: '5 物理量',
+        group: '移動',
         shortcut: '5',
         icon: <BarChart3 className="w-3.5 h-3.5" />,
         onSelect: () => {
@@ -291,21 +287,21 @@ export const App: React.FC = () => {
       },
       {
         id: 'mode-dic',
-        label: 'DIC ひずみ・動画解析ユーティリティに切替',
-        group: 'ワークスペース',
+        label: 'DIC フレーム抽出',
+        group: 'モード',
         icon: <Film className="w-3.5 h-3.5" />,
         onSelect: () => setMainMode('dic'),
       },
       {
         id: 'pick-folder',
-        label: 'ファイル: データフォルダを選択...',
-        group: 'アクション',
-        icon: <Folder className="w-3.5 h-3.5" />,
+        label: 'フォルダを選択...',
+        group: 'ファイル',
+        icon: <FolderOpen className="w-3.5 h-3.5" />,
         onSelect: handleSelectFolderQuick,
       },
       {
         id: 'toggle-sidebar',
-        label: showSidebar ? '表示: エクスプローラーを閉じる' : '表示: エクスプローラーを開く',
+        label: 'サイドバー切替',
         group: '表示',
         shortcut: 'Ctrl+B',
         icon: <PanelLeft className="w-3.5 h-3.5" />,
@@ -313,7 +309,7 @@ export const App: React.FC = () => {
       },
       {
         id: 'toggle-console',
-        label: showConsole ? '表示: ログコンソールを閉じる' : '表示: ログコンソールを開く',
+        label: 'コンソール切替',
         group: '表示',
         shortcut: 'Ctrl+`',
         icon: <Terminal className="w-3.5 h-3.5" />,
@@ -321,32 +317,33 @@ export const App: React.FC = () => {
       },
       {
         id: 'open-spec',
-        label: 'ヘルプ: Voigtモデル・計算仕様を表示',
+        label: 'モデル仕様・ショートカット',
         group: 'ヘルプ',
         icon: <BookOpen className="w-3.5 h-3.5" />,
         onSelect: () => setShowSpecModal(true),
       },
       {
         id: 'check-health',
-        label: '診断: Backend API 接続確認',
-        group: 'システム',
+        label: 'API 疎通確認',
+        group: '診断',
         icon: <Activity className="w-3.5 h-3.5" />,
         onSelect: handleCheckHealth,
       },
     ],
-    [showSidebar, showConsole, folderPath]
+    [folderPath]
   );
 
-  const activeStepMeta = stepsMeta.find((s) => s.step === xrdStep) || stepsMeta[0];
+  const folderShortName = folderPath
+    ? folderPath.split(/[\\/]/).filter(Boolean).pop() || folderPath
+    : '未選択';
 
   return (
-    <div className="h-dvh w-screen overflow-hidden flex flex-col bg-[#0d0e11] text-[#eceef2]">
-      {/* Titlebar (38px) */}
-      <header className="h-[38px] shrink-0 bg-[#121418] border-b border-[#23262e] px-2.5 flex items-center justify-between gap-2 select-none relative z-30">
-        {/* Left: Brand & Menus */}
+    <div className="h-dvh w-screen overflow-hidden flex flex-col bg-[#0b0c0f] text-[#eef0f4]">
+      {/* Titlebar (36px) */}
+      <header className="h-[36px] shrink-0 bg-[#101216] border-b border-[#22262f] px-2.5 flex items-center justify-between gap-2 select-none relative z-30">
         <div className="flex items-center gap-1 min-w-0">
-          <div className="flex items-center gap-2 pr-2 mr-1 border-r border-[#23262e]">
-            <div className="w-5 h-5 rounded bg-[#1c1f26] border border-[#2e323d] flex items-center justify-center shrink-0">
+          <div className="flex items-center gap-2 pr-2.5 mr-1 border-r border-[#22262f]">
+            <div className="w-5 h-5 rounded bg-[#181c23] border border-[#2c313d] flex items-center justify-center shrink-0">
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" aria-hidden="true">
                 <path
                   d="M2 12 L5 12 L7.5 3.5 L10 12 L14 12"
@@ -366,12 +363,11 @@ export const App: React.FC = () => {
                 />
               </svg>
             </div>
-            <span className="text-[12px] font-semibold tracking-tight text-[#eceef2] whitespace-nowrap">
+            <span className="text-[12px] font-semibold tracking-tight text-[#eef0f4] whitespace-nowrap">
               XRD AutoFit Studio
             </span>
           </div>
 
-          {/* Menu buttons */}
           <div className="hidden sm:flex items-center gap-0.5 text-[11px]">
             <div className="relative" onClick={(e) => e.stopPropagation()}>
               <button
@@ -380,23 +376,23 @@ export const App: React.FC = () => {
                 className={cn(
                   'h-6 px-2 rounded transition-colors',
                   openMenu === 'file'
-                    ? 'bg-[#1c1f26] text-[#eceef2]'
-                    : 'text-[#787f90] hover:text-[#eceef2] hover:bg-[#16181d]'
+                    ? 'bg-[#1c2028] text-[#eef0f4]'
+                    : 'text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e]'
                 )}
               >
                 ファイル
               </button>
               {openMenu === 'file' && (
-                <div className="absolute left-0 top-7 w-52 bg-[#16181d] border border-[#2e323d] rounded-md shadow-xl py-1 z-50">
+                <div className="absolute left-0 top-7 w-48 bg-[#15181e] border border-[#303644] rounded-md shadow-2xl py-1 z-50">
                   <button
                     type="button"
                     onClick={() => {
                       setOpenMenu(null);
                       handleSelectFolderQuick();
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2] flex items-center justify-between"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e]"
                   >
-                    <span>フォルダを選択...</span>
+                    フォルダ選択...
                   </button>
                   <button
                     type="button"
@@ -405,9 +401,9 @@ export const App: React.FC = () => {
                       setMainMode('xrd');
                       setXrdStep(1);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2]"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e]"
                   >
-                    Step 1 (前処理) へ移動
+                    前処理へ
                   </button>
                 </div>
               )}
@@ -420,24 +416,24 @@ export const App: React.FC = () => {
                 className={cn(
                   'h-6 px-2 rounded transition-colors',
                   openMenu === 'view'
-                    ? 'bg-[#1c1f26] text-[#eceef2]'
-                    : 'text-[#787f90] hover:text-[#eceef2] hover:bg-[#16181d]'
+                    ? 'bg-[#1c2028] text-[#eef0f4]'
+                    : 'text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e]'
                 )}
               >
                 表示
               </button>
               {openMenu === 'view' && (
-                <div className="absolute left-0 top-7 w-56 bg-[#16181d] border border-[#2e323d] rounded-md shadow-xl py-1 z-50">
+                <div className="absolute left-0 top-7 w-52 bg-[#15181e] border border-[#303644] rounded-md shadow-2xl py-1 z-50">
                   <button
                     type="button"
                     onClick={() => {
                       setShowSidebar((v) => !v);
                       setOpenMenu(null);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2] flex items-center justify-between"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e] flex items-center justify-between"
                   >
-                    <span>サイドバー表示切替</span>
-                    <kbd className="text-[10px] font-mono text-[#787f90]">Ctrl+B</kbd>
+                    <span>サイドバー</span>
+                    <kbd className="text-[10px] font-mono text-[#5d6473]">Ctrl+B</kbd>
                   </button>
                   <button
                     type="button"
@@ -445,10 +441,10 @@ export const App: React.FC = () => {
                       setShowConsole((v) => !v);
                       setOpenMenu(null);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2] flex items-center justify-between"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e] flex items-center justify-between"
                   >
-                    <span>ログコンソール切替</span>
-                    <kbd className="text-[10px] font-mono text-[#787f90]">Ctrl+`</kbd>
+                    <span>コンソール</span>
+                    <kbd className="text-[10px] font-mono text-[#5d6473]">Ctrl+`</kbd>
                   </button>
                   <button
                     type="button"
@@ -456,10 +452,10 @@ export const App: React.FC = () => {
                       setShowPalette(true);
                       setOpenMenu(null);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2] flex items-center justify-between"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e] flex items-center justify-between"
                   >
                     <span>コマンドパレット</span>
-                    <kbd className="text-[10px] font-mono text-[#787f90]">Ctrl+K</kbd>
+                    <kbd className="text-[10px] font-mono text-[#5d6473]">Ctrl+K</kbd>
                   </button>
                 </div>
               )}
@@ -472,23 +468,23 @@ export const App: React.FC = () => {
                 className={cn(
                   'h-6 px-2 rounded transition-colors',
                   openMenu === 'help'
-                    ? 'bg-[#1c1f26] text-[#eceef2]'
-                    : 'text-[#787f90] hover:text-[#eceef2] hover:bg-[#16181d]'
+                    ? 'bg-[#1c2028] text-[#eef0f4]'
+                    : 'text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e]'
                 )}
               >
                 ヘルプ
               </button>
               {openMenu === 'help' && (
-                <div className="absolute left-0 top-7 w-52 bg-[#16181d] border border-[#2e323d] rounded-md shadow-xl py-1 z-50">
+                <div className="absolute left-0 top-7 w-48 bg-[#15181e] border border-[#303644] rounded-md shadow-2xl py-1 z-50">
                   <button
                     type="button"
                     onClick={() => {
                       setShowSpecModal(true);
                       setOpenMenu(null);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2]"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e]"
                   >
-                    モデル仕様・ショートカット
+                    モデル仕様
                   </button>
                   <button
                     type="button"
@@ -496,9 +492,9 @@ export const App: React.FC = () => {
                       handleCheckHealth();
                       setOpenMenu(null);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#b4b9c4] hover:bg-[#1c1f26] hover:text-[#eceef2]"
+                    className="w-full px-3 py-1.5 text-left text-[11px] text-[#cfd4de] hover:bg-[#1f242e]"
                   >
-                    Backend API 疎通確認
+                    API 接続確認
                   </button>
                 </div>
               )}
@@ -506,45 +502,43 @@ export const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Center: Command trigger & Workspace Mode */}
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setShowPalette(true)}
-            className="hidden md:flex items-center justify-between gap-4 w-60 h-[26px] px-2.5 bg-[#0a0b0e] border border-[#23262e] hover:border-[#2e323d] rounded text-[11px] text-[#787f90] transition-colors"
+            className="hidden md:flex items-center justify-between gap-4 w-52 h-[24px] px-2.5 bg-[#08090c] border border-[#22262f] hover:border-[#303644] rounded text-[11px] text-[#5d6473] transition-colors"
           >
             <span className="flex items-center gap-1.5 truncate">
               <Search className="w-3 h-3 shrink-0" />
-              <span className="truncate">ステップ移動・操作を検索...</span>
+              <span className="truncate">検索 / コマンド...</span>
             </span>
-            <kbd className="text-[10px] font-mono bg-[#16181d] border border-[#23262e] px-1 rounded text-[#787f90] shrink-0">
+            <kbd className="text-[10px] font-mono bg-[#15181e] border border-[#22262f] px-1 rounded text-[#858d9c] shrink-0">
               Ctrl+K
             </kbd>
           </button>
 
           <SegmentedControl<MainMode>
-            ariaLabel="解析モード切替"
+            ariaLabel="解析モード"
             size="sm"
             value={mainMode}
             onChange={setMainMode}
             options={[
-              { value: 'xrd', label: 'XRD 解析', accent: 'sky' },
-              { value: 'dic', label: 'DIC 動画', accent: 'emerald' },
+              { value: 'xrd', label: 'XRD', accent: 'sky' },
+              { value: 'dic', label: 'DIC', accent: 'emerald' },
             ]}
           />
         </div>
 
-        {/* Right: Panel toggles & Spec */}
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => setShowSidebar((v) => !v)}
-            title="サイドバー切替 (Ctrl+B)"
+            title="サイドバー (Ctrl+B)"
             className={cn(
-              'h-7 w-7 rounded flex items-center justify-center transition-colors',
+              'h-6 w-6 rounded flex items-center justify-center transition-colors',
               showSidebar
-                ? 'bg-[#1c1f26] text-[#eceef2]'
-                : 'text-[#787f90] hover:text-[#eceef2] hover:bg-[#16181d]'
+                ? 'bg-[#1c2028] text-[#eef0f4]'
+                : 'text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e]'
             )}
           >
             <PanelLeft className="w-3.5 h-3.5" />
@@ -552,12 +546,12 @@ export const App: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowConsole((v) => !v)}
-            title="ログコンソール切替 (Ctrl+`)"
+            title="コンソール (Ctrl+`)"
             className={cn(
-              'h-7 w-7 rounded flex items-center justify-center transition-colors',
+              'h-6 w-6 rounded flex items-center justify-center transition-colors',
               showConsole
-                ? 'bg-[#1c1f26] text-[#eceef2]'
-                : 'text-[#787f90] hover:text-[#eceef2] hover:bg-[#16181d]'
+                ? 'bg-[#1c2028] text-[#eef0f4]'
+                : 'text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e]'
             )}
           >
             <PanelBottom className="w-3.5 h-3.5" />
@@ -565,8 +559,8 @@ export const App: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowSpecModal(true)}
-            title="計算仕様・ショートカット"
-            className="h-7 px-2 rounded flex items-center gap-1 text-[11px] text-[#787f90] hover:text-[#eceef2] hover:bg-[#16181d] transition-colors"
+            title="仕様"
+            className="h-6 px-1.5 rounded flex items-center gap-1 text-[11px] text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e] transition-colors"
           >
             <HelpCircle className="w-3.5 h-3.5" />
             <span className="hidden lg:inline">仕様</span>
@@ -574,24 +568,22 @@ export const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Workbench Area */}
+      {/* Main Workbench */}
       <div className="flex-1 min-h-0 flex">
-        {/* Left Activity Rail (44px) */}
-        <aside className="w-[44px] shrink-0 bg-[#121418] border-r border-[#23262e] flex flex-col items-center justify-between py-2 select-none">
-          <div className="flex flex-col items-center gap-1.5 w-full">
+        {/* Activity Rail (42px) */}
+        <aside className="w-[42px] shrink-0 bg-[#101216] border-r border-[#22262f] flex flex-col items-center justify-between py-2 select-none">
+          <div className="flex flex-col items-center gap-1 w-full">
             <button
               type="button"
               onClick={() => setMainMode('xrd')}
-              title="XRD 解析ワークベンチ"
+              title="XRD"
               className={cn(
                 'relative w-full h-9 flex items-center justify-center transition-colors',
-                mainMode === 'xrd'
-                  ? 'text-[#38bdf8]'
-                  : 'text-[#787f90] hover:text-[#b4b9c4]'
+                mainMode === 'xrd' ? 'text-sky-400' : 'text-[#5d6473] hover:text-[#98a0ae]'
               )}
             >
               {mainMode === 'xrd' && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-[#38bdf8] rounded-r" />
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-sky-400 rounded-r" />
               )}
               <Layers className="w-4 h-4" />
             </button>
@@ -599,77 +591,62 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setMainMode('dic')}
-              title="DIC 動画・フレーム変換"
+              title="DIC"
               className={cn(
                 'relative w-full h-9 flex items-center justify-center transition-colors',
-                mainMode === 'dic'
-                  ? 'text-[#34d399]'
-                  : 'text-[#787f90] hover:text-[#b4b9c4]'
+                mainMode === 'dic' ? 'text-emerald-400' : 'text-[#5d6473] hover:text-[#98a0ae]'
               )}
             >
               {mainMode === 'dic' && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-[#34d399] rounded-r" />
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-emerald-400 rounded-r" />
               )}
               <Film className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex flex-col items-center gap-1.5 w-full">
+          <div className="flex flex-col items-center gap-1 w-full">
             <button
               type="button"
               onClick={() => setShowPalette(true)}
-              title="コマンドパレット (Ctrl+K)"
-              className="w-full h-8 flex items-center justify-center text-[#787f90] hover:text-[#b4b9c4]"
+              title="Ctrl+K"
+              className="w-full h-8 flex items-center justify-center text-[#5d6473] hover:text-[#98a0ae]"
             >
-              <Command className="w-4 h-4" />
+              <Command className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
               onClick={() => setShowSpecModal(true)}
-              title="モデル仕様"
-              className="w-full h-8 flex items-center justify-center text-[#787f90] hover:text-[#b4b9c4]"
+              title="仕様"
+              className="w-full h-8 flex items-center justify-center text-[#5d6473] hover:text-[#98a0ae]"
             >
-              <BookOpen className="w-4 h-4" />
+              <BookOpen className="w-3.5 h-3.5" />
             </button>
           </div>
         </aside>
 
-        {/* Collapsible Explorer Sidebar (236px) */}
+        {/* Explorer Sidebar (216px) */}
         {showSidebar && (
-          <aside className="w-[236px] shrink-0 bg-[#121418] border-r border-[#23262e] flex flex-col min-h-0 select-none">
-            <div className="px-3 py-2.5 border-b border-[#23262e]">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-semibold text-[#b4b9c4]">
-                  {mainMode === 'xrd' ? '解析パイプライン' : '動画ユーティリティ'}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleSelectFolderQuick}
-                  className="text-[10px] text-[#38bdf8] hover:underline whitespace-nowrap"
-                >
-                  フォルダ変更
-                </button>
-              </div>
-              <div className="bg-[#0a0b0e] border border-[#23262e] rounded p-2 space-y-1">
-                <div className="flex items-center justify-between text-[10px] text-[#787f90]">
-                  <span>試験片</span>
-                  <span className="font-mono text-[#b4b9c4] truncate max-w-[130px]">
-                    {specimenName || '未設定'}
-                  </span>
+          <aside className="w-[216px] shrink-0 bg-[#101216] border-r border-[#22262f] flex flex-col min-h-0 select-none">
+            <div className="px-2.5 py-2 border-b border-[#22262f]">
+              <button
+                type="button"
+                onClick={handleSelectFolderQuick}
+                title={folderPath || 'フォルダ選択'}
+                className="w-full px-2 py-1.5 rounded bg-[#08090c] border border-[#22262f] hover:border-[#303644] flex items-center justify-between gap-2 transition-colors text-left"
+              >
+                <div className="min-w-0">
+                  <div className="text-[11px] font-medium text-[#eef0f4] truncate">
+                    {specimenName || folderShortName}
+                  </div>
+                  <div className="text-[10px] font-mono text-[#5d6473] truncate">
+                    {folderShortName}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between text-[10px] text-[#787f90]">
-                  <span>フォルダ</span>
-                  <span
-                    className="font-mono text-[#b4b9c4] truncate max-w-[130px]"
-                    title={folderPath || '未選択'}
-                  >
-                    {folderPath ? folderPath.split(/[\\/]/).filter(Boolean).pop() : '未選択'}
-                  </span>
-                </div>
-              </div>
+                <FolderOpen className="w-3.5 h-3.5 text-[#5d6473] shrink-0" />
+              </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto px-1.5 py-2 space-y-0.5">
               {mainMode === 'xrd' ? (
                 stepsMeta.map((item) => {
                   const isActive = item.step === xrdStep;
@@ -679,112 +656,98 @@ export const App: React.FC = () => {
                       type="button"
                       onClick={() => setXrdStep(item.step)}
                       className={cn(
-                        'w-full px-2.5 py-2 rounded text-left flex items-center justify-between gap-2 transition-colors border',
+                        'relative w-full h-8 px-2.5 rounded text-left flex items-center justify-between gap-2 transition-colors',
                         isActive
-                          ? 'bg-[#1c1f26] border-[#2e323d] text-[#eceef2]'
-                          : 'bg-transparent border-transparent text-[#787f90] hover:bg-[#16181d] hover:text-[#b4b9c4]'
+                          ? 'bg-[#181c23] text-[#eef0f4]'
+                          : 'text-[#858d9c] hover:bg-[#14171d] hover:text-[#eef0f4]'
                       )}
                     >
+                      {isActive && (
+                        <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-sky-400 rounded-r" />
+                      )}
                       <div className="flex items-center gap-2 min-w-0">
                         <span
                           className={cn(
-                            'font-mono text-[10px] tabular-nums w-4 text-center shrink-0',
-                            isActive ? 'text-[#38bdf8]' : 'text-[#525866]'
+                            'font-mono text-[10px] tabular-nums w-3.5 text-center shrink-0',
+                            isActive ? 'text-sky-400' : 'text-[#5d6473]'
                           )}
                         >
-                          0{item.step}
+                          {item.step}
                         </span>
-                        <span className="text-[12px] font-medium truncate">{item.short}</span>
+                        <span className="text-[12px] font-medium truncate">{item.label}</span>
                       </div>
-                      <StatusBadge tone={item.badgeTone} mono>
-                        {item.badgeText}
-                      </StatusBadge>
+
+                      {item.indicator === 'done' ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      ) : item.indicator ? (
+                        <span
+                          className={cn(
+                            'text-[10px] font-mono tabular-nums px-1.5 rounded leading-4 shrink-0 whitespace-nowrap',
+                            item.step === 4 && totalOutlierCount > 0
+                              ? 'bg-amber-500/15 text-amber-300'
+                              : 'bg-[#1d212a] text-[#98a0ae]'
+                          )}
+                        >
+                          {item.indicator}
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })
               ) : (
-                <div className="px-2.5 py-2 rounded bg-[#1c1f26] border border-[#2e323d] flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Film className="w-3.5 h-3.5 text-[#34d399]" />
-                    <span className="text-[12px] font-medium text-[#eceef2]">動画切り出し・DIC</span>
-                  </div>
-                  <StatusBadge tone="emerald">有効</StatusBadge>
+                <div className="relative h-8 px-2.5 rounded bg-[#181c23] text-[#eef0f4] flex items-center gap-2">
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] bg-emerald-400 rounded-r" />
+                  <Film className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="text-[12px] font-medium truncate">フレーム抽出</span>
                 </div>
               )}
-            </div>
-
-            <div className="px-3 py-2 border-t border-[#23262e] text-[10px] text-[#787f90] space-y-1">
-              <div className="flex items-center justify-between">
-                <span>クイック移動</span>
-                <kbd className="font-mono bg-[#16181d] border border-[#23262e] px-1 rounded">
-                  Ctrl+K
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>サイドバー</span>
-                <kbd className="font-mono bg-[#16181d] border border-[#23262e] px-1 rounded">
-                  Ctrl+B
-                </kbd>
-              </div>
             </div>
           </aside>
         )}
 
         {/* Center Workbench Stage */}
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
-          {/* Document Tab Strip (36px) */}
-          <div className="h-[36px] shrink-0 bg-[#121418] border-b border-[#23262e] flex items-center justify-between px-2 overflow-x-auto select-none">
-            <div className="flex items-center h-full">
-              {mainMode === 'xrd' ? (
-                stepsMeta.map((item) => {
-                  const isActive = item.step === xrdStep;
-                  return (
-                    <button
-                      key={item.step}
-                      type="button"
-                      onClick={() => setXrdStep(item.step)}
-                      className={cn(
-                        'relative h-full px-3 text-[11px] font-medium flex items-center gap-1.5 border-r border-[#23262e] whitespace-nowrap transition-colors',
-                        isActive
-                          ? 'bg-[#0d0e11] text-[#eceef2]'
-                          : 'bg-transparent text-[#787f90] hover:text-[#b4b9c4] hover:bg-[#16181d]'
-                      )}
-                    >
-                      {isActive && (
-                        <span className="absolute top-0 left-0 right-0 h-[2px] bg-[#38bdf8]" />
-                      )}
-                      {item.done && (
-                        <CheckCircle2 className="w-3 h-3 text-[#34d399] shrink-0" />
-                      )}
-                      <span>{item.step}. {item.short}</span>
-                      {item.step === 4 && totalOutlierCount > 0 && (
-                        <span className="ml-0.5 px-1.5 py-0 rounded-full bg-[#f59e0b]/15 text-[#f59e0b] text-[10px] font-mono tabular-nums">
-                          {totalOutlierCount}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="relative h-full px-3.5 text-[11px] font-medium flex items-center gap-1.5 border-r border-[#23262e] bg-[#0d0e11] text-[#eceef2] whitespace-nowrap">
-                  <span className="absolute top-0 left-0 right-0 h-[2px] bg-[#34d399]" />
-                  <Film className="w-3.5 h-3.5 text-[#34d399]" />
-                  <span>動画検査・AVI / TIFF 変換ユーティリティ</span>
-                </div>
-              )}
-            </div>
-
-            {mainMode === 'xrd' && (
-              <div className="hidden lg:flex items-center gap-1 text-[11px] text-[#787f90] pr-2 whitespace-nowrap">
-                <span>XRD</span>
-                <ChevronRight className="w-3 h-3" />
-                <span className="text-[#b4b9c4]">{activeStepMeta.title}</span>
+          {/* Flat Document Tab Strip (34px) */}
+          <div className="h-[34px] shrink-0 bg-[#101216] border-b border-[#22262f] flex items-center overflow-x-auto select-none">
+            {mainMode === 'xrd' ? (
+              stepsMeta.map((item) => {
+                const isActive = item.step === xrdStep;
+                return (
+                  <button
+                    key={item.step}
+                    type="button"
+                    onClick={() => setXrdStep(item.step)}
+                    className={cn(
+                      'relative h-full px-3.5 text-[11px] font-medium flex items-center gap-1.5 border-r border-[#22262f] whitespace-nowrap transition-colors',
+                      isActive
+                        ? 'bg-[#0b0c0f] text-[#eef0f4]'
+                        : 'bg-transparent text-[#858d9c] hover:text-[#eef0f4] hover:bg-[#15181e]'
+                    )}
+                  >
+                    {isActive && (
+                      <span className="absolute top-0 left-0 right-0 h-[2px] bg-sky-400" />
+                    )}
+                    <span className="font-mono text-[10px] text-[#5d6473]">{item.step}.</span>
+                    <span>{item.label}</span>
+                    {item.done && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
+                    {item.step === 4 && totalOutlierCount > 0 && (
+                      <span className="px-1 rounded bg-amber-500/15 text-amber-300 text-[10px] font-mono tabular-nums">
+                        {totalOutlierCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })
+            ) : (
+              <div className="relative h-full px-3.5 text-[11px] font-medium flex items-center gap-1.5 border-r border-[#22262f] bg-[#0b0c0f] text-[#eef0f4] whitespace-nowrap">
+                <span className="absolute top-0 left-0 right-0 h-[2px] bg-emerald-400" />
+                <Film className="w-3.5 h-3.5 text-emerald-400" />
+                <span>フレーム抽出</span>
               </div>
             )}
           </div>
 
-          {/* Scrollable Main View */}
-          <main className="flex-1 min-h-0 overflow-y-auto p-4 bg-[#0d0e11]">
+          <main className="flex-1 min-h-0 overflow-y-auto p-3.5 bg-[#0b0c0f]">
             <div className="max-w-[1600px] mx-auto">
               {mainMode === 'dic' ? (
                 <VideoUtilityTab />
@@ -835,29 +798,28 @@ export const App: React.FC = () => {
             </div>
           </main>
 
-          {/* Collapsible Bottom Console (168px) */}
           {showConsole && (
-            <section className="h-[168px] shrink-0 bg-[#0a0b0e] border-t border-[#23262e] flex flex-col min-h-0">
-              <div className="h-7 px-3 border-b border-[#23262e] bg-[#121418] flex items-center justify-between text-[11px]">
-                <div className="flex items-center gap-2 text-[#b4b9c4] font-medium">
-                  <Terminal className="w-3.5 h-3.5 text-[#38bdf8]" />
-                  <span>出力ログ</span>
-                  <span className="font-mono text-[10px] text-[#787f90] tabular-nums">
-                    ({logs.length})
+            <section className="h-[156px] shrink-0 bg-[#08090c] border-t border-[#22262f] flex flex-col min-h-0">
+              <div className="h-7 px-3 border-b border-[#22262f] bg-[#101216] flex items-center justify-between text-[11px]">
+                <div className="flex items-center gap-2 text-[#98a0ae] font-medium">
+                  <Terminal className="w-3.5 h-3.5 text-sky-400" />
+                  <span>ログ</span>
+                  <span className="font-mono text-[10px] text-[#5d6473] tabular-nums">
+                    {logs.length}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <button
                     type="button"
                     onClick={() => setLogs([])}
-                    className="text-[10px] text-[#787f90] hover:text-[#eceef2]"
+                    className="text-[10px] text-[#5d6473] hover:text-[#eef0f4]"
                   >
                     クリア
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowConsole(false)}
-                    className="text-[10px] text-[#787f90] hover:text-[#eceef2]"
+                    className="text-[10px] text-[#5d6473] hover:text-[#eef0f4]"
                   >
                     閉じる
                   </button>
@@ -865,24 +827,24 @@ export const App: React.FC = () => {
               </div>
               <div className="flex-1 overflow-y-auto px-3 py-1.5 font-mono text-[11px] space-y-0.5 tabular-nums">
                 {logs.length === 0 ? (
-                  <div className="text-[#525866]">ログはありません</div>
+                  <div className="text-[#5d6473]">空</div>
                 ) : (
                   logs.map((entry) => (
                     <div key={entry.id} className="flex items-start gap-2.5">
-                      <span className="text-[#525866] shrink-0">{entry.time}</span>
+                      <span className="text-[#5d6473] shrink-0">{entry.time}</span>
                       <span
                         className={cn(
                           'shrink-0 uppercase text-[10px]',
                           entry.level === 'error'
-                            ? 'text-[#fb7185]'
+                            ? 'text-rose-400'
                             : entry.level === 'warn'
-                              ? 'text-[#f59e0b]'
-                              : 'text-[#38bdf8]'
+                              ? 'text-amber-400'
+                              : 'text-sky-400'
                         )}
                       >
                         {entry.level}
                       </span>
-                      <span className="text-[#b4b9c4] break-all">{entry.message}</span>
+                      <span className="text-[#cfd4de] break-all">{entry.message}</span>
                     </div>
                   ))
                 )}
@@ -892,20 +854,20 @@ export const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Footer Status Bar (24px) */}
-      <footer className="h-[24px] shrink-0 bg-[#121418] border-t border-[#23262e] px-3 flex items-center justify-between text-[11px] font-mono tabular-nums text-[#787f90] select-none">
+      {/* Status Bar (22px) */}
+      <footer className="h-[22px] shrink-0 bg-[#101216] border-t border-[#22262f] px-3 flex items-center justify-between text-[10px] font-mono tabular-nums text-[#5d6473] select-none">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-[#b4b9c4] whitespace-nowrap">
-            {mainMode === 'xrd' ? `XRD Step ${xrdStep}/5` : 'DIC Utility'}
+          <span className="text-[#98a0ae] whitespace-nowrap">
+            {mainMode === 'xrd' ? `XRD ${xrdStep}/5` : 'DIC'}
           </span>
           {specimenName && (
             <span className="truncate max-w-[160px]" title={specimenName}>
-              Specimen: {specimenName}
+              {specimenName}
             </span>
           )}
           {folderPath && (
-            <span className="hidden md:inline truncate max-w-[300px]" title={folderPath}>
-              Dir: {folderPath}
+            <span className="hidden md:inline truncate max-w-[320px]" title={folderPath}>
+              {folderPath}
             </span>
           )}
         </div>
@@ -920,18 +882,18 @@ export const App: React.FC = () => {
               }}
               className={cn(
                 'hover:underline whitespace-nowrap',
-                totalOutlierCount > 0 ? 'text-[#f59e0b]' : 'text-[#34d399]'
+                totalOutlierCount > 0 ? 'text-amber-400' : 'text-emerald-400'
               )}
             >
-              Outliers: {totalOutlierCount}
+              Outliers {totalOutlierCount}
             </button>
           )}
           <button
             type="button"
             onClick={() => setShowConsole((v) => !v)}
-            className="hover:text-[#eceef2] whitespace-nowrap"
+            className="hover:text-[#eef0f4] whitespace-nowrap"
           >
-            Log ({logs.length})
+            Log {logs.length}
           </button>
           <span className="whitespace-nowrap">
             {isDesktopBridge() ? 'Desktop IPC' : 'Local API'}
@@ -939,7 +901,6 @@ export const App: React.FC = () => {
         </div>
       </footer>
 
-      {/* Modals */}
       <CommandPalette
         open={showPalette}
         onClose={() => setShowPalette(false)}

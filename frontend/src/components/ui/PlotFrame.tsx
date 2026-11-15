@@ -10,7 +10,7 @@ export interface PlotFrameProps {
   className?: string;
 }
 
-/** Bespoke scientific plot housing with integrated header toolbar and inset chart canvas. */
+/** Machined scientific chart housing with recessed plot well and flush control strip. */
 export const PlotFrame: React.FC<PlotFrameProps> = ({
   title,
   subtitle,
@@ -22,27 +22,30 @@ export const PlotFrame: React.FC<PlotFrameProps> = ({
   return (
     <section
       className={cn(
-        'rounded-lg bg-[#16181d] border border-[#23262e] flex flex-col overflow-hidden',
+        'rounded-md bg-[#15181e] border border-[#22262f] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.035)] flex flex-col overflow-hidden',
         className
       )}
     >
-      <div className="px-4 py-2.5 border-b border-[#23262e] flex flex-wrap items-center justify-between gap-2 bg-[#16181d]">
-        <div className="flex items-baseline gap-2.5 min-w-0">
-          <h3 className="text-[13px] font-semibold text-[#eceef2] truncate">{title}</h3>
+      <div className="px-3.5 py-2 border-b border-[#22262f] flex flex-wrap items-center justify-between gap-2 bg-[#13161b]">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-sky-400/70 shrink-0" />
+          <h3 className="text-[12px] font-semibold text-[#eef0f4] tracking-tight truncate">
+            {title}
+          </h3>
           {subtitle && (
-            <span className="text-xs font-mono tabular-nums text-[#636b78] truncate">
+            <span className="text-[11px] font-mono tabular-nums text-[#5d6473] truncate">
               {subtitle}
             </span>
           )}
         </div>
-        {toolbar && <div className="flex items-center gap-2 shrink-0 flex-wrap">{toolbar}</div>}
+        {toolbar && <div className="flex items-center gap-1.5 shrink-0 flex-wrap">{toolbar}</div>}
       </div>
 
       {subbar && (
-        <div className="px-3.5 py-2 border-b border-[#23262e] bg-[#121418]">{subbar}</div>
+        <div className="px-3.5 py-1.5 border-b border-[#22262f] bg-[#101216]">{subbar}</div>
       )}
 
-      <div className="bg-[#0a0b0e] p-2 flex-1 min-h-0">{children}</div>
+      <div className="bg-[#08090c] p-1.5 flex-1 min-h-0">{children}</div>
     </section>
   );
 };

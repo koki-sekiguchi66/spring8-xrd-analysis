@@ -19,6 +19,7 @@ import {
 import { apiGet, apiPost, cn, fmtFixed, fmtSci } from '../lib/utils';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
+import { EmptyCanvas } from './ui/EmptyCanvas';
 import { CheckboxRow, FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
 import { Notice } from './ui/Notice';
 import { Panel, PanelBody, PanelHeader } from './ui/Panel';
@@ -148,7 +149,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         setPeakParams(nextParams);
       }
     } catch (e: any) {
-      setErrorMsg(e.message || '波形の読み込みに失敗しました');
+      setErrorMsg(e.message || '波形読込エラー');
     } finally {
       setLoadingWaveform(false);
     }
@@ -187,8 +188,8 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
     if (!activeGroup) return;
     const matchesPhase =
       phase === 'gamma'
-        ? activeGroup.peaks.some((p) => p.toLowerCase().includes('gamma'))
-        : activeGroup.peaks.some((p) => p.toLowerCase().includes('alpha'));
+        ? activeGroup.peaks.some((p) => p.toLowerCase().includes('gamma') || p.startsWith('fcc'))
+        : activeGroup.peaks.some((p) => p.toLowerCase().includes('alpha') || p.startsWith('bcc'));
     if (!matchesPhase) {
       setSelectedNums([]);
       return;
@@ -284,7 +285,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         await loadWaveform(activeGroup.group_id, inspectNum);
       }
     } catch (e: any) {
-      setErrorMsg(e.message || '一括再Fitに失敗しました');
+      setErrorMsg(e.message || '一括再Fitエラー');
     } finally {
       setIsRefittingBatch(false);
     }
@@ -335,7 +336,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         }
       }
     } catch (e: any) {
-      setErrorMsg(e.message || '単体再Fitに失敗しました');
+      setErrorMsg(e.message || '再Fitエラー');
     } finally {
       setIsRefittingSingle(false);
     }
@@ -385,7 +386,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         await loadWaveform(activeGroup.group_id, inspectNum);
       }
     } catch (e: any) {
-      setErrorMsg(e.message || '選択キューへの適用に失敗しました');
+      setErrorMsg(e.message || '一括適用エラー');
     } finally {
       setIsRefittingBatch(false);
     }
@@ -415,7 +416,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
       });
       setExportResult(res);
     } catch (e: any) {
-      setErrorMsg(e.message || 'Excel出力に失敗しました');
+      setErrorMsg(e.message || 'Excel出力エラー');
     } finally {
       setIsExporting(false);
     }
@@ -430,7 +431,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         y: y_obs,
         type: 'scatter',
         mode: 'lines',
-        name: '実測値',
+        name: '実測',
         line: { color: '#787f90', width: 1.4 },
       },
       {
@@ -438,7 +439,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         y: y_fit,
         type: 'scatter',
         mode: 'lines',
-        name: '合成フィッティング',
+        name: '合成 Fit',
         line: { color: '#34d399', width: 2 },
       },
     ];
@@ -507,108 +508,98 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
   }, [activeGroup, outlierSet]);
 
   if (groupList.length === 0) {
-    return (
-      <Panel className="max-w-xl mx-auto mt-8">
-        <PanelHeader title="バッチフィッティング結果がありません" />
-        <PanelBody>
-          <p className="text-[12px] text-[#787f90]">
-            Step 3 でバッチフィッティングを実行すると、外れ値の検証・手動再フィッティング・Excel 出力が可能になります。
-          </p>
-        </PanelBody>
-      </Panel>
-    );
+    return <EmptyCanvas className="h-72" label="解析結果なし" meta="Step 3" />;
   }
 
   return (
     <div className="space-y-3">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#121418] border border-[#23262e] rounded-md px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl<SubView>
-            ariaLabel="検証ビュー切替"
-            value={activeSubView}
-            onChange={setActiveSubView}
-            options={[
-              {
-                value: 'outlier_studio',
-                label: '波形・外れ値修正',
-                badge: outlierCountTotal > 0 ? outlierCountTotal : undefined,
-                accent: outlierCountTotal > 0 ? 'amber' : 'sky',
-              },
-              {
-                value: 'trend_and_export',
-                label: '時系列トレンド・Excel出力',
-                accent: 'emerald',
-              },
-            ]}
-          />
+      <Panel>
+        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedControl<SubView>
+              ariaLabel="表示切替"
+              size="sm"
+              value={activeSubView}
+              onChange={setActiveSubView}
+              options={[
+                {
+                  value: 'outlier_studio',
+                  label: '波形検証',
+                  badge: outlierCountTotal > 0 ? outlierCountTotal : undefined,
+                  accent: outlierCountTotal > 0 ? 'amber' : 'sky',
+                },
+                {
+                  value: 'trend_and_export',
+                  label: 'トレンド・出力',
+                  accent: 'emerald',
+                },
+              ]}
+            />
 
-          {groupList.length > 1 && (
-            <div className="flex items-center gap-1 border-l border-[#23262e] pl-2">
-              {groupList.map((g) => {
-                const count = g.outlier_nums?.length || 0;
-                return (
-                  <button
-                    key={g.group_id}
-                    type="button"
-                    onClick={() => setSelectedGid(g.group_id)}
-                    className={cn(
-                      'h-7 px-2.5 rounded text-[11px] font-medium flex items-center gap-1.5 border transition-colors whitespace-nowrap',
-                      g.group_id === selectedGid
-                        ? 'bg-[#1c1f26] text-[#eceef2] border-[#38bdf8]/40'
-                        : 'bg-transparent text-[#787f90] border-transparent hover:text-[#b4b9c4] hover:bg-[#16181d]'
-                    )}
-                  >
-                    <span className="truncate max-w-[140px]">{g.sheet_name}</span>
-                    {count > 0 && (
-                      <span className="text-[10px] font-mono tabular-nums text-[#f59e0b]">
-                        {count}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+            {groupList.length > 1 && (
+              <div className="flex items-center gap-1 border-l border-[#22262f] pl-2">
+                {groupList.map((g) => {
+                  const count = g.outlier_nums?.length || 0;
+                  return (
+                    <button
+                      key={g.group_id}
+                      type="button"
+                      onClick={() => setSelectedGid(g.group_id)}
+                      className={cn(
+                        'h-6 px-2 rounded text-[11px] font-medium flex items-center gap-1.5 border transition-colors whitespace-nowrap',
+                        g.group_id === selectedGid
+                          ? 'bg-[#1c2028] text-[#eef0f4] border-sky-500/40'
+                          : 'bg-transparent text-[#858d9c] border-transparent hover:text-[#eef0f4] hover:bg-[#15181e]'
+                      )}
+                    >
+                      <span className="truncate max-w-[140px]">{g.sheet_name}</span>
+                      {count > 0 && (
+                        <span className="text-[10px] font-mono tabular-nums text-amber-300">
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-        <div className="flex items-center gap-2">
-          <StatusBadge
-            tone={outlierCountTotal > 0 ? 'amber' : 'emerald'}
-            dot
-            mono
-          >
-            外れ値 {outlierCountTotal}件
-          </StatusBadge>
-          <Button
-            variant="emerald"
-            size="sm"
-            onClick={onProceedStep5}
-            disabled={groupList.length === 0}
-          >
-            <span>物性値・転位密度解析へ</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <StatusBadge tone={outlierCountTotal > 0 ? 'amber' : 'emerald'} dot mono>
+              外れ値 {outlierCountTotal}
+            </StatusBadge>
+            <Button
+              variant="emerald"
+              size="sm"
+              onClick={onProceedStep5}
+              disabled={groupList.length === 0}
+            >
+              <span>次へ: 物理量</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
-      </div>
+      </Panel>
 
       {errorMsg && <Notice tone="error">{errorMsg}</Notice>}
 
       {batchSummary && (
         <Notice tone="success">
-          一括再フィッティング完了: {batchSummary.repaired_count}件を更新しました
+          再Fit完了: {batchSummary.repaired_count}件更新
           {batchSummary.saved_path ? ` (${batchSummary.saved_path})` : ''}
         </Notice>
       )}
 
       {activeSubView === 'outlier_studio' && activeGroup && (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-3">
-          {/* Left 3 cols: Queue & file list */}
+          {/* Left 3 cols */}
           <div className="xl:col-span-3 space-y-3">
             <Panel>
               <PanelHeader
-                title="再フィッティングキュー"
-                subtitle={`${selectedNums.length} / ${activeGroup.rows.length} 選択`}
+                title="キュー"
+                subtitle={`${selectedNums.length}/${activeGroup.rows.length}`}
               />
               <PanelBody className="space-y-2.5">
                 <div className="grid grid-cols-2 gap-1.5">
@@ -616,21 +607,21 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     全外れ値
                   </Button>
                   <Button variant="ghost" size="xs" onClick={handleClearQueue}>
-                    選択解除
+                    解除
                   </Button>
                   <Button
                     variant="secondary"
                     size="xs"
                     onClick={() => handleSelectPhaseOutliers('gamma')}
                   >
-                    γ相のみ
+                    γ相
                   </Button>
                   <Button
                     variant="secondary"
                     size="xs"
                     onClick={() => handleSelectPhaseOutliers('alpha')}
                   >
-                    α'相のみ
+                    α&apos;相
                   </Button>
                 </div>
 
@@ -639,7 +630,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     mono
                     value={manualInput}
                     onChange={(e) => setManualInput(e.target.value)}
-                    placeholder="番号追加 (例: 12, 15-18)"
+                    placeholder="12, 15-18"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleAddManualNums();
                     }}
@@ -652,7 +643,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                 <CheckboxRow
                   checked={useNeighborInterpolation}
                   onChange={setUseNeighborInterpolation}
-                  label="隣接正常フレームから初期値を自動補間"
+                  label="近傍フレーム補間"
                 />
 
                 <Button
@@ -662,22 +653,17 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                   onClick={handleBatchRefit}
                   disabled={isRefittingBatch || selectedNums.length === 0}
                 >
-                  <Play className="w-3.5 h-3.5" />
+                  <Play className="w-3 h-3 fill-current" />
                   <span>
-                    {isRefittingBatch
-                      ? '一括再Fit中...'
-                      : `選択 ${selectedNums.length}件を一括再Fit`}
+                    {isRefittingBatch ? '実行中...' : `一括再Fit (${selectedNums.length})`}
                   </span>
                 </Button>
               </PanelBody>
             </Panel>
 
             <Panel>
-              <PanelHeader
-                title="ファイル一覧"
-                subtitle={`${activeGroup.rows.length}件`}
-              />
-              <div className="max-h-[420px] overflow-y-auto divide-y divide-[#1a1d24]">
+              <PanelHeader title="フレーム" subtitle={`${activeGroup.rows.length}`} />
+              <div className="max-h-[420px] overflow-y-auto divide-y divide-[#1a1d25]">
                 {activeGroup.rows.map((row) => {
                   const isInspected = row.num === inspectNum;
                   const isQueued = selectedNums.includes(row.num);
@@ -688,36 +674,30 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                       className={cn(
                         'flex items-center gap-2 px-3 py-1.5 text-[11px] transition-colors',
                         isInspected
-                          ? 'bg-[#1c1f26] text-[#eceef2]'
-                          : 'hover:bg-[#16181d] text-[#b4b9c4]'
+                          ? 'bg-[#1c2028] text-[#eef0f4]'
+                          : 'hover:bg-[#15181e] text-[#98a0ae]'
                       )}
                     >
                       <input
                         type="checkbox"
                         checked={isQueued}
                         onChange={() => handleToggleQueueNum(row.num)}
-                        aria-label={`#${row.num} を選択`}
-                        className="w-3.5 h-3.5 rounded border-[#2e323d] bg-[#0a0b0e] accent-[#38bdf8] shrink-0"
+                        aria-label={`#${row.num}`}
+                        className="w-3.5 h-3.5 rounded border-[#303644] bg-[#08090c] accent-sky-500 shrink-0"
                       />
                       <button
                         type="button"
                         onClick={() => setInspectNum(row.num)}
                         className="flex-1 flex items-center justify-between gap-2 text-left min-w-0"
                       >
-                        <span className="font-mono tabular-nums font-medium">
-                          #{row.num}
-                        </span>
-                        <span className="font-mono tabular-nums text-[10px] text-[#787f90] truncate">
+                        <span className="font-mono tabular-nums font-medium">#{row.num}</span>
+                        <span className="font-mono tabular-nums text-[10px] text-[#5d6473] truncate">
                           R={fmtFixed(row.residual, 4)}
                         </span>
                         {isOutlier ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-[#f59e0b] shrink-0">
-                            <AlertTriangle className="w-3 h-3" />
-                          </span>
+                          <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-[#34d399]/70 shrink-0">
-                            <Check className="w-3 h-3" />
-                          </span>
+                          <Check className="w-3 h-3 text-emerald-400/70 shrink-0" />
                         )}
                       </button>
                     </div>
@@ -727,18 +707,14 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
             </Panel>
           </div>
 
-          {/* Center 6 cols: Waveform Plot */}
+          {/* Center 6 cols */}
           <div className="xl:col-span-6">
             <PlotFrame
-              title={
-                waveform
-                  ? `#${waveform.num} (${waveform.filename})`
-                  : '波形インスペクター'
-              }
+              title={waveform ? `#${waveform.num} (${waveform.filename})` : '波形インスペクター'}
               subtitle={
                 waveform
-                  ? `相対残差 ${(waveform.relative_residual * 100).toFixed(2)}% / RMSE ${fmtFixed(waveform.residual_rmse, 2)}`
-                  : 'ファイルを選択'
+                  ? `R=${(waveform.relative_residual * 100).toFixed(2)}% · RMSE ${fmtFixed(waveform.residual_rmse, 2)}`
+                  : undefined
               }
               toolbar={
                 <div className="flex items-center gap-1.5">
@@ -751,7 +727,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     variant="secondary"
                     size="xs"
                     onClick={() => handleStepQueue(-1)}
-                    title="前のファイル"
+                    title="前"
                   >
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </Button>
@@ -759,57 +735,53 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     variant="secondary"
                     size="xs"
                     onClick={() => handleStepQueue(1)}
-                    title="次のファイル"
+                    title="次"
                   >
                     <ChevronRight className="w-3.5 h-3.5" />
                   </Button>
                 </div>
               }
               subbar={
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#787f90]">
-                  <span>グループ: {activeGroup.sheet_name}</span>
-                  <span className="font-mono tabular-nums">
-                    best_R = {activeGroup.best_R !== undefined ? fmtFixed(activeGroup.best_R, 4) : '—'}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[#5d6473]">
+                  <span>{activeGroup.sheet_name}</span>
+                  <span className="tabular-nums">
+                    best_R {activeGroup.best_R !== undefined ? fmtFixed(activeGroup.best_R, 4) : '—'}
                   </span>
                 </div>
               }
             >
               {loadingWaveform ? (
-                <div className="h-[460px] flex items-center justify-center text-[12px] text-[#787f90]">
-                  波形データを読み込み中...
+                <div className="h-[460px] flex items-center justify-center text-[11px] font-mono text-[#5d6473]">
+                  Loading...
                 </div>
               ) : waveformTraces.length > 0 ? (
                 <PlotlyChart
                   data={waveformTraces}
                   layout={{
                     xaxis: { title: '2θ [deg]' },
-                    yaxis: { title: '強度 [counts]' },
-                    margin: { t: 16, r: 16, b: 44, l: 56 },
+                    yaxis: { title: 'Intensity' },
+                    margin: { t: 14, r: 16, b: 40, l: 54 },
                   }}
                   className="w-full h-[460px]"
                 />
               ) : (
-                <div className="h-[460px] flex items-center justify-center text-[12px] text-[#787f90]">
-                  左のリストから番号を選択してください
-                </div>
+                <EmptyCanvas className="h-[460px]" label="フレーム未選択" />
               )}
             </PlotFrame>
           </div>
 
-          {/* Right 3 cols: Parameter Inspector & Single Refit */}
+          {/* Right 3 cols */}
           <div className="xl:col-span-3 space-y-3">
             <Panel>
               <PanelHeader
-                title="初期パラメータ編集"
+                title="パラメータ"
                 subtitle={inspectNum !== null ? `#${inspectNum}` : undefined}
-                actions={
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#787f90]" />
-                }
+                actions={<SlidersHorizontal className="w-3.5 h-3.5 text-[#5d6473]" />}
               />
               <PanelBody className="space-y-3">
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <FieldLabel>Fit下限 (2θ)</FieldLabel>
+                    <FieldLabel>min (2θ)</FieldLabel>
                     <UnitNumberInput
                       unit="°"
                       step="0.02"
@@ -818,7 +790,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     />
                   </div>
                   <div>
-                    <FieldLabel>Fit上限 (2θ)</FieldLabel>
+                    <FieldLabel>max (2θ)</FieldLabel>
                     <UnitNumberInput
                       unit="°"
                       step="0.02"
@@ -828,13 +800,9 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                   </div>
                 </div>
 
-                <CheckboxRow
-                  checked={varyY0}
-                  onChange={setVaryY0}
-                  label="ベースライン y0 を可変にする"
-                />
+                <CheckboxRow checked={varyY0} onChange={setVaryY0} label="y0 可変" />
 
-                <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-0.5">
+                <div className="space-y-2 max-h-[340px] overflow-y-auto pr-0.5">
                   {activeGroup.peaks.map((pk, idx) => {
                     const p = peakParams[pk] || {
                       center: 0,
@@ -854,20 +822,20 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     return (
                       <div
                         key={pk}
-                        className="bg-[#0a0b0e] border border-[#23262e] rounded p-2.5 space-y-2"
+                        className="bg-[#08090c] border border-[#22262f] rounded p-2 space-y-1.5"
                       >
                         <div className="flex items-center gap-2">
                           <span
                             className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: PEAK_COLORS[idx % PEAK_COLORS.length] }}
                           />
-                          <span className="text-[11px] font-medium text-[#eceef2] truncate">
+                          <span className="text-[11px] font-mono font-semibold text-[#eef0f4] truncate">
                             {pk}
                           </span>
                         </div>
                         <div className="grid grid-cols-2 gap-1.5">
                           <div>
-                            <FieldLabel>中心 2θ</FieldLabel>
+                            <FieldLabel>2θ</FieldLabel>
                             <UnitNumberInput
                               unit="°"
                               step="0.01"
@@ -878,7 +846,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                             />
                           </div>
                           <div>
-                            <FieldLabel>積分強度 I</FieldLabel>
+                            <FieldLabel>I</FieldLabel>
                             <UnitNumberInput
                               step="10"
                               value={p.amplitude}
@@ -888,7 +856,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                             />
                           </div>
                           <div>
-                            <FieldLabel>Gauss幅 wG</FieldLabel>
+                            <FieldLabel>wG</FieldLabel>
                             <UnitNumberInput
                               step="0.005"
                               value={p.wG}
@@ -898,7 +866,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                             />
                           </div>
                           <div>
-                            <FieldLabel>Lorentz幅 wL</FieldLabel>
+                            <FieldLabel>wL</FieldLabel>
                             <UnitNumberInput
                               step="0.005"
                               value={p.wL}
@@ -913,7 +881,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                   })}
                 </div>
 
-                <div className="space-y-1.5 pt-1 border-t border-[#23262e]">
+                <div className="space-y-1.5 pt-2 border-t border-[#22262f]">
                   <Button
                     variant="primary"
                     size="sm"
@@ -922,7 +890,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     disabled={isRefittingSingle || inspectNum === null}
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>{isRefittingSingle ? '再Fit実行中...' : '現在フレームを再Fit'}</span>
+                    <span>{isRefittingSingle ? '実行中...' : '再Fit'}</span>
                   </Button>
                   <Button
                     variant="secondary"
@@ -931,7 +899,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     onClick={() => handleSingleRefit(true)}
                     disabled={isRefittingSingle || inspectNum === null}
                   >
-                    <span>再Fitして次の外れ値へ</span>
+                    <span>再Fit → 次へ</span>
                     <ChevronRight className="w-3.5 h-3.5" />
                   </Button>
                   <Button
@@ -941,8 +909,8 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     onClick={handleApplyParamsToSelected}
                     disabled={isRefittingBatch || selectedNums.length === 0}
                   >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>この初期値を選択 {selectedNums.length}件に一括適用</span>
+                    <Layers className="w-3 h-3" />
+                    <span>選択 {selectedNums.length}件へ適用</span>
                   </Button>
                 </div>
               </PanelBody>
@@ -953,11 +921,10 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
 
       {activeSubView === 'trend_and_export' && activeGroup && (
         <div className="space-y-3">
-          {/* Export bar */}
           <Panel>
             <PanelHeader
-              title="Excel ワークブック出力"
-              subtitle={`グループ数: ${groupList.length}`}
+              title="Excel 出力"
+              subtitle={`${groupList.length} sheets`}
               actions={
                 <Button
                   variant="emerald"
@@ -966,41 +933,27 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                   disabled={isExporting}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>{isExporting ? '出力中...' : 'Excel (.xlsx) を出力'}</span>
+                  <span>{isExporting ? '出力中...' : 'エクスポート'}</span>
                 </Button>
               }
             />
             {exportResult && (
               <PanelBody>
                 <Notice tone={exportResult.used_fallback ? 'warning' : 'success'}>
-                  <div className="space-y-1">
-                    <div className="font-medium">
-                      保存完了: <span className="font-mono">{exportResult.saved_path}</span>
-                    </div>
-                    <div className="text-[11px] opacity-90">
-                      シート: {exportResult.sheets.join(', ')}
-                      {exportResult.used_fallback
-                        ? ' (元ファイルが使用中だったため別名で保存しました)'
-                        : ''}
-                    </div>
-                  </div>
+                  <div className="font-mono text-[11px]">{exportResult.saved_path}</div>
                 </Notice>
               </PanelBody>
             )}
           </Panel>
 
-          {/* Trend Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <PlotFrame
-              title="ピーク位置推移 (2θ)"
-              subtitle="点をクリックすると波形検証へ移動"
-            >
+            <PlotFrame title="ピーク位置 (2θ)" subtitle="クリックで波形へ">
               <PlotlyChart
                 data={trendCenterTraces}
                 layout={{
-                  xaxis: { title: 'フレーム番号' },
+                  xaxis: { title: '#' },
                   yaxis: { title: '2θ [deg]' },
-                  margin: { t: 16, r: 16, b: 42, l: 56 },
+                  margin: { t: 14, r: 16, b: 38, l: 54 },
                 }}
                 className="w-full h-[300px]"
                 onPointClick={(pt) => {
@@ -1012,16 +965,13 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
               />
             </PlotFrame>
 
-            <PlotFrame
-              title="積分強度推移 (I)"
-              subtitle="点をクリックすると波形検証へ移動"
-            >
+            <PlotFrame title="積分強度 (I)" subtitle="クリックで波形へ">
               <PlotlyChart
                 data={trendIntensityTraces}
                 layout={{
-                  xaxis: { title: 'フレーム番号' },
-                  yaxis: { title: '積分強度' },
-                  margin: { t: 16, r: 16, b: 42, l: 56 },
+                  xaxis: { title: '#' },
+                  yaxis: { title: 'Intensity' },
+                  margin: { t: 14, r: 16, b: 38, l: 54 },
                 }}
                 className="w-full h-[300px]"
                 onPointClick={(pt) => {
@@ -1034,16 +984,13 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
             </PlotFrame>
           </div>
 
-          <PlotFrame
-            title="相対残差 (Relative Residual) 推移"
-            subtitle="赤: 外れ値判定フレーム / クリックで該当波形を開く"
-          >
+          <PlotFrame title="相対残差" subtitle="赤: 外れ値 · クリックで波形へ">
             <PlotlyChart
               data={trendResidualTraces}
               layout={{
-                xaxis: { title: 'フレーム番号' },
-                yaxis: { title: '相対残差 [-]' },
-                margin: { t: 16, r: 16, b: 42, l: 56 },
+                xaxis: { title: '#' },
+                yaxis: { title: 'Relative Residual' },
+                margin: { t: 14, r: 16, b: 38, l: 54 },
               }}
               className="w-full h-[240px]"
               onPointClick={(pt) => {
@@ -1055,19 +1002,18 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
             />
           </PlotFrame>
 
-          {/* Summary Table */}
           <Panel>
             <PanelHeader
-              title="フィッティングパラメータ一覧"
-              subtitle={`${activeGroup.sheet_name} (${activeGroup.rows.length}行)`}
+              title="パラメータ一覧"
+              subtitle={`${activeGroup.sheet_name} · ${activeGroup.rows.length}`}
             />
             <div className="max-h-[320px] overflow-auto">
               <table className="w-full text-[11px] font-mono tabular-nums border-collapse">
-                <thead className="sticky top-0 bg-[#121418] border-b border-[#23262e] text-[#787f90]">
+                <thead className="sticky top-0 bg-[#101216] border-b border-[#22262f] text-[#858d9c]">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">#</th>
                     <th className="text-left px-3 py-2 font-medium">状態</th>
-                    <th className="text-right px-3 py-2 font-medium">相対残差</th>
+                    <th className="text-right px-3 py-2 font-medium">残差</th>
                     {activeGroup.peaks.map((pk) => (
                       <React.Fragment key={pk}>
                         <th className="text-right px-3 py-2 font-medium">2θ ({pk})</th>
@@ -1077,7 +1023,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#1a1d24]">
+                <tbody className="divide-y divide-[#1a1d25]">
                   {activeGroup.rows.map((row) => {
                     const isOutlier = outlierSet.has(row.num);
                     return (
@@ -1087,14 +1033,14 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                           setInspectNum(row.num);
                           setActiveSubView('outlier_studio');
                         }}
-                        className="hover:bg-[#1c1f26] cursor-pointer text-[#b4b9c4]"
+                        className="hover:bg-[#1c2028] cursor-pointer text-[#98a0ae]"
                       >
-                        <td className="px-3 py-1.5 text-[#eceef2]">{row.num}</td>
+                        <td className="px-3 py-1.5 text-[#eef0f4]">{row.num}</td>
                         <td className="px-3 py-1.5">
                           {isOutlier ? (
-                            <span className="text-[#f59e0b]">外れ値</span>
+                            <span className="text-amber-400">外れ値</span>
                           ) : (
-                            <span className="text-[#34d399]">正常</span>
+                            <span className="text-emerald-400">正常</span>
                           )}
                         </td>
                         <td className="px-3 py-1.5 text-right">{fmtSci(row.residual, 2)}</td>
