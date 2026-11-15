@@ -192,6 +192,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
             range_min: next.th_min,
             range_max: next.th_max,
             v3_center_cap: next.v3_center_cap ?? 11.65,
+            baseline: next.init_baseline,
           }
         );
         next = { ...next, init_num: res.num, init_peaks: res.peaks };

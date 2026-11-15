@@ -290,6 +290,8 @@ class CandidateFitResult:
     y_fit: List[float]
     residual: List[float]
     components: Dict[str, List[float]]
+    baseline_mode: str = "none"
+    baseline: Optional[List[float]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -326,6 +328,8 @@ class CandidateFitResult:
             "y_fit": [round(v, 4) for v in self.y_fit],
             "residual": [round(v, 4) for v in self.residual],
             "components": {k: [round(v, 4) for v in arr] for k, arr in self.components.items()},
+            "baseline_mode": self.baseline_mode,
+            "baseline": [round(v, 4) for v in self.baseline] if self.baseline is not None else None,
         }
 
 
@@ -549,6 +553,49 @@ def predict_crystallographic_peaks(x: np.ndarray, y: np.ndarray) -> List[Dict[st
     return markers
 
 
+BASELINE_MODES = ("none", "constant", "end_points_weighted", "straight_line")
+# Recommended default: Origin's Voigt with its y0 fitted together with the peaks. This is how the
+# Origin initial values of Harada's procedure were obtained (y0 != 0 in his _initial.xlsx). Baselines
+# taken from the window ends (End Points Weighted / Straight Line) cut the Lorentzian tails of broad
+# alpha' peaks and are therefore options only.
+DEFAULT_BASELINE_MODE = "constant"
+DEFAULT_END_POINTS_PCT = 5.0
+
+
+def window_end_baseline(x: np.ndarray, y: np.ndarray, mode: str, end_points_pct: float = DEFAULT_END_POINTS_PCT) -> np.ndarray:
+    """Baseline of a fit window built from its ends, as in Origin's Peak Analyzer.
+
+    - "straight_line": the line through the first and last data points (Origin's default A and B).
+    - "end_points_weighted": `end_points_pct` % of the points at each end, smoothed by adjacent
+      averaging (window = 6 % of the selected points, Origin's default), then linear interpolation.
+    """
+    n = len(x)
+    if mode == "straight_line":
+        slope = (y[-1] - y[0]) / (x[-1] - x[0]) if x[-1] != x[0] else 0.0
+        return y[0] + slope * (x - x[0])
+    k = int(max(2, min(n // 2 - 1, round(n * float(end_points_pct) / 100.0))))
+    xs = np.concatenate([x[:k], x[-k:]])
+    ys = np.concatenate([y[:k], y[-k:]])
+    win = int(max(1, round(0.06 * len(xs))))
+    if win > 1:
+        kernel = np.ones(win) / win
+        left = np.convolve(np.pad(y[:k], (win // 2, win - 1 - win // 2), mode="edge"), kernel, mode="valid")
+        right = np.convolve(np.pad(y[-k:], (win // 2, win - 1 - win // 2), mode="edge"), kernel, mode="valid")
+        ys = np.concatenate([left, right])
+    return np.interp(x, xs, ys)
+
+
+def baseline_kwargs(baseline: Optional[Dict[str, Any]], vary_y0: bool = False) -> Dict[str, Any]:
+    """Keyword arguments of `fit_origin_voigt_group` for a baseline spec (default: recommended mode)."""
+    b = baseline or {}
+    mode = b.get("mode") or ("constant" if vary_y0 else DEFAULT_BASELINE_MODE)
+    return {
+        "baseline_mode": mode,
+        "end_points_pct": float(b.get("end_points_pct") or DEFAULT_END_POINTS_PCT),
+        "fit_baseline_with_peaks": bool(b.get("fit_with_peaks", False)),
+    }
+
+
 def fit_origin_voigt_group(
     x_full: np.ndarray,
     y_full: np.ndarray,
@@ -564,8 +611,22 @@ def fit_origin_voigt_group(
     initial_A: Optional[List[float]] = None,
     vary_y0: bool = False,
     subtract_linear_bg: bool = False,
+    baseline_mode: Optional[str] = None,
+    end_points_pct: float = DEFAULT_END_POINTS_PCT,
+    fit_baseline_with_peaks: bool = False,
 ) -> CandidateFitResult:
-    """Perform an Origin-compatible independent-width Voigt fit on a single peak or multi-peak group."""
+    """Perform an Origin-compatible independent-width Voigt fit on a single peak or multi-peak group.
+
+    `baseline_mode` (Origin Peak Analyzer): "none" (Y = 0), "constant" (Voigt y0 fitted with the
+    peaks), "end_points_weighted" / "straight_line" (built from the window ends and subtracted; with
+    `fit_baseline_with_peaks` the straight line is fitted together with the peaks).
+    `None` keeps the legacy flags (`vary_y0` -> constant).
+    """
+    if baseline_mode is None:
+        baseline_mode = "constant" if vary_y0 else "none"
+    if baseline_mode not in BASELINE_MODES:
+        raise ValueError(f"Unknown baseline_mode: {baseline_mode}")
+    vary_y0 = baseline_mode == "constant"
     random.seed(42)
     np.random.seed(42)
 
@@ -581,6 +642,13 @@ def fit_origin_voigt_group(
     else:
         y = y_raw
 
+    base_arr = np.zeros_like(y)
+    line_fit = baseline_mode == "straight_line" and fit_baseline_with_peaks
+    if baseline_mode in ("end_points_weighted", "straight_line"):
+        base_arr = window_end_baseline(x, y, baseline_mode, end_points_pct)
+        if not line_fit:
+            y = y - base_arr
+
     ref_lookup = {r["name"]: r for r in PHASE_REFLECTIONS}
     markers_map = {m["name"]: m for m in predict_crystallographic_peaks(x_full, y_full)}
 
@@ -589,7 +657,15 @@ def fit_origin_voigt_group(
     model = None
     params = None
 
-    if vary_y0:
+    if line_fit:
+        from lmfit.models import LinearModel
+
+        l_mod = LinearModel(prefix="bl_")
+        slope0 = float((base_arr[-1] - base_arr[0]) / (x[-1] - x[0])) if x[-1] != x[0] else 0.0
+        l_pars = l_mod.make_params(slope=slope0, intercept=float(base_arr[0] - slope0 * x[0]))
+        model = l_mod
+        params = l_pars
+    elif vary_y0:
         c_mod = ConstantModel(prefix="bg_")
         c_pars = c_mod.make_params(c=float(np.percentile(y, 10)))
         c_pars["bg_c"].set(min=-500.0, max=max(500.0, float(np.max(y)) * 0.5), vary=True)
@@ -693,6 +769,11 @@ def fit_origin_voigt_group(
     rel_res = rmse / mean_abs_y if mean_abs_y > 1e-9 else 0.0
 
     y0_val = float(out.best_values.get("bg_c", 0.0)) if vary_y0 else 0.0
+    if line_fit:
+        base_arr = out.best_values["bl_intercept"] + out.best_values["bl_slope"] * x
+    elif vary_y0:
+        base_arr = np.full_like(x, y0_val)
+    subtracted = baseline_mode in ("end_points_weighted", "straight_line") and not line_fit
 
     fitted_peaks: List[PeakFitParam] = []
     comp_dict: Dict[str, List[float]] = {}
@@ -708,7 +789,7 @@ def fit_origin_voigt_group(
         fwhm = calc_origin_fwhm(wG, wL)
 
         comp_arr = comps.get(prefix, np.zeros_like(x))
-        comp_dict[pk_name] = (comp_arr + y0_val).tolist()
+        comp_dict[pk_name] = (comp_arr + base_arr).tolist()
         peak_height = float(np.max(comp_arr)) if len(comp_arr) > 0 else 0.0
         snr = peak_height / noise_floor
 
@@ -719,7 +800,9 @@ def fit_origin_voigt_group(
                 phase=ref_meta["phase"],
                 hkl=ref_meta["hkl"],
                 No=num,
-                y0=y0_val,
+                # Excel y0: Voigt offset (constant); line fitted with the peaks -> its value at xc;
+                # baseline subtracted before the fit -> 0 (the peak model has no offset)
+                y0=(float(np.interp(xc, x, base_arr)) if line_fit else y0_val),
                 xc=xc,
                 A=A,
                 wG=wG,
@@ -746,10 +829,12 @@ def fit_origin_voigt_group(
         is_weak=is_weak,
         peaks=fitted_peaks,
         x=x.tolist(),
-        y_obs=y.tolist(),
-        y_fit=y_fit.tolist(),
+        y_obs=(y + base_arr).tolist() if subtracted else y.tolist(),
+        y_fit=(y_fit + base_arr).tolist() if subtracted else y_fit.tolist(),
         residual=residual.tolist(),
         components=comp_dict,
+        baseline_mode=baseline_mode,
+        baseline=base_arr.tolist() if baseline_mode != "none" else None,
     )
 
 
@@ -758,8 +843,13 @@ def build_candidate_group(
     loaded_arrays: Dict[int, Tuple[str, np.ndarray, np.ndarray]],
     target_nums: List[int],
     vary_y0: bool = False,
+    baseline: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Fit one candidate group on every loaded representative file (Step 2 card)."""
+    """Fit one candidate group on every loaded representative file (Step 2 card).
+
+    `baseline`: {"mode", "end_points_pct", "fit_with_peaks"} (see `fit_origin_voigt_group`).
+    """
+    bl = baseline_kwargs(baseline, vary_y0)
     gid = spec["group_id"]
     fits_by_num: Dict[str, Dict[str, Any]] = {}
     for num, (fname, x, y) in loaded_arrays.items():
@@ -773,7 +863,7 @@ def build_candidate_group(
                 peak_names=spec["peaks"],
                 range_min=spec["range_min"],
                 range_max=spec["range_max"],
-                vary_y0=vary_y0,
+                **bl,
             )
             fits_by_num[str(num)] = fit_res.to_dict()
         except Exception as e:
@@ -838,6 +928,7 @@ def run_custom_group(
     range_max: Optional[float] = None,
     group_id: Optional[str] = None,
     vary_y0: bool = False,
+    baseline: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Fit a user-defined group on the given representative files and return a Step 2 card."""
     root = resolve_analyzed_folder(folder_path)
@@ -855,7 +946,7 @@ def run_custom_group(
     if not loaded:
         raise FileNotFoundError(f"指定 num のファイルが見つかりません: {nums}")
     target = sorted(loaded)
-    group = build_candidate_group(spec, loaded, target, vary_y0)
+    group = build_candidate_group(spec, loaded, target, vary_y0, baseline)
     group["selected"] = True  # explicitly requested by the user, even if a peak is weak
     return group
 
@@ -865,6 +956,7 @@ def run_initial_auto_detect(
     mode: str = "auto",
     manual_nums: Optional[List[int]] = None,
     vary_y0: bool = False,
+    baseline: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run initial peak & pair discovery across representative or manually specified files."""
     root = resolve_analyzed_folder(folder_path)
@@ -911,7 +1003,7 @@ def run_initial_auto_detect(
         }
 
     candidate_groups: List[Dict[str, Any]] = [
-        build_candidate_group(spec, loaded_arrays, target_nums, vary_y0) for spec in CANDIDATE_GROUP_SPECS
+        build_candidate_group(spec, loaded_arrays, target_nums, vary_y0, baseline) for spec in CANDIDATE_GROUP_SPECS
     ]
 
     return {

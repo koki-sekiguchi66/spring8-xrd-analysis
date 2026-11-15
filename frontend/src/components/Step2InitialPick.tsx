@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RefreshCw,
   ArrowRight,
@@ -15,12 +15,13 @@ import { Button } from './ui/Button';
 import { Panel, PanelBody, PanelHeader } from './ui/Panel';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { PlotFrame } from './ui/PlotFrame';
-import { TextInput, UnitNumberInput } from './ui/Field';
+import { CheckboxRow, SelectInput, TextInput, UnitNumberInput } from './ui/Field';
 import { StatusBadge } from './ui/StatusBadge';
 import { Notice } from './ui/Notice';
 import { apiPost, fmtFixed } from '../lib/utils';
 import { ENGINE_RUN_DEFAULTS } from '../lib/engineDefaults';
 import type {
+  BaselineSpec,
   CandidateFitResult,
   CandidateGroup,
   GroupBatchConfig,
@@ -59,7 +60,13 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
   const [manualInput, setManualInput] = useState<string>('50, 900');
-  const [varyY0] = useState<boolean>(false);
+  // Origin Peak Analyzer baseline. Default (recommended): Voigt y0 fitted with the peaks, as in
+  // Origin's Voigt function and Harada's Origin initial values.
+  const [baseline, setBaseline] = useState<BaselineSpec>({
+    mode: 'constant',
+    end_points_pct: 5,
+    fit_with_peaks: false,
+  });
   const [loading, setLoading] = useState<boolean>(false);
   const [savingExcel, setSavingExcel] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +91,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
           folder_path: folderPath,
           mode: targetMode,
           manual_nums: customNums,
-          vary_y0: varyY0,
+          baseline,
         });
         setInitialData(res);
         if (res.selected_nums.length > 0) {
@@ -103,14 +110,49 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
           };
         }
         setRangeEdits(initRanges);
+        return res;
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
+        return null;
       } finally {
         setLoading(false);
       }
     },
-    [folderPath, varyY0, setInitialData]
+    [folderPath, baseline, setInitialData]
   );
+
+  // Changing the baseline re-fits every group (custom groups are re-created with the same peaks/range)
+  const baselineKey = `${baseline.mode}|${baseline.end_points_pct}|${baseline.fit_with_peaks}`;
+  const lastBaselineKey = useRef(baselineKey);
+  useEffect(() => {
+    if (lastBaselineKey.current === baselineKey || !initialData || loading) return;
+    lastBaselineKey.current = baselineKey;
+    const customs = initialData.candidate_groups.filter((g) => g.is_custom);
+    const nums = initialData.selected_nums;
+    (async () => {
+      const res = await runDetection(mode, mode === 'manual' ? nums : undefined);
+      if (!res) return;
+      for (const g of customs) {
+        try {
+          const group = await apiPost<CandidateGroup>('/api/initial/custom-group', {
+            folder_path: folderPath,
+            peaks: g.peaks,
+            nums: res.selected_nums,
+            range_min: g.range_min,
+            range_max: g.range_max,
+            group_id: g.group_id,
+            baseline,
+          });
+          setInitialData((prev) =>
+            prev ? { ...prev, candidate_groups: [...prev.candidate_groups, group] } : prev
+          );
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baselineKey]);
 
   useEffect(() => {
     if (!initialData && folderPath) {
@@ -201,7 +243,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         range_min: rMin,
         range_max: rMax,
         initial_centers: edit.centers.length === group.peaks.length ? edit.centers : undefined,
-        vary_y0: varyY0,
+        baseline,
       });
 
       setInitialData((prev) => {
@@ -265,7 +307,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         nums: initialData.selected_nums,
         range_min: rMin !== undefined ? Number(rMin.toFixed(3)) : undefined,
         range_max: rMax !== undefined ? Number(rMax.toFixed(3)) : undefined,
-        vary_y0: varyY0,
+        baseline,
       });
       setInitialData((prev) =>
         prev
@@ -347,6 +389,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         use_bcc211_constraint: false,
         bcc110_center_tol_deg: 0.05,
         step2_num: g.selected_num,
+        init_baseline: baseline,
         init_options: Object.fromEntries(
           Object.entries(g.fits_by_num)
             .filter(([, f]) => f && !f.error && f.peaks && f.peaks.length === g.peaks.length)
@@ -436,6 +479,18 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         name: `実測 (#${focusedGroup.selected_num})`,
         marker: { color: '#9ca3b0', size: 5 },
       },
+      ...(activeFit.baseline
+        ? [
+            {
+              x: activeFit.x,
+              y: activeFit.baseline,
+              type: 'scatter',
+              mode: 'lines',
+              name: 'ベースライン',
+              line: { color: '#34d399', width: 1.5, dash: 'dash' },
+            },
+          ]
+        : []),
       {
         x: activeFit.x,
         y: activeFit.y_fit,
@@ -570,6 +625,47 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
             {/* Secondary Mode + Primary Next Button */}
             <div className="flex flex-wrap items-center justify-end gap-2.5 shrink-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12px] text-[#98a0ae]">ベースライン</span>
+                <SelectInput
+                  aria-label="ベースライン"
+                  value={baseline.mode}
+                  disabled={loading}
+                  onChange={(e) =>
+                    setBaseline((b) => ({ ...b, mode: e.target.value as BaselineSpec['mode'] }))
+                  }
+                  title="Origin Peak Analyzer のベースライン: なし / 定数 / End Points Weighted / Straight Line"
+                  className="w-48 h-8 text-xs"
+                >
+                  <option value="constant">定数 y0 同時 fit（推奨）</option>
+                  <option value="none">なし (Y=0)</option>
+                  <option value="end_points_weighted">端点重み付け</option>
+                  <option value="straight_line">直線（両端点）</option>
+                </SelectInput>
+                {baseline.mode === 'end_points_weighted' && (
+                  <UnitNumberInput
+                    aria-label="端点の割合"
+                    unit="%"
+                    step="1"
+                    min="1"
+                    max="40"
+                    value={baseline.end_points_pct}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (v > 0) setBaseline((b) => ({ ...b, end_points_pct: v }));
+                    }}
+                    className="w-20 tabular-nums"
+                  />
+                )}
+                {baseline.mode === 'straight_line' && (
+                  <CheckboxRow
+                    checked={baseline.fit_with_peaks}
+                    onChange={(v) => setBaseline((b) => ({ ...b, fit_with_peaks: v }))}
+                    label={<span className="text-xs">ピークと同時に fit</span>}
+                  />
+                )}
+              </div>
+
               <SegmentedControl
                 ariaLabel="選出モード"
                 size="md"

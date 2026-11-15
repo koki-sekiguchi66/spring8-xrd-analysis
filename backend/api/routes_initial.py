@@ -13,11 +13,19 @@ from pydantic import BaseModel, Field
 
 from ..core.excel_io import append_initial_block, read_initial_blocks, read_initial_workbook, save_initial_excel
 from ..core.physics_analyzer import canonical_peak_key
-from ..core.origin_voigt import fit_origin_voigt_group, run_custom_group, run_initial_auto_detect
+from ..core.origin_voigt import baseline_kwargs, fit_origin_voigt_group, run_custom_group, run_initial_auto_detect
 from ..core.utils import find_file_by_num, infer_specimen_name, list_sorted_bcg_files, resolve_analyzed_folder
 from .routes_fitting import SESSION_STORE
 
 router = APIRouter(prefix="/api/initial", tags=["initial"])
+
+
+class BaselineSpec(BaseModel):
+    """Origin Peak Analyzer baseline of the Step 2 fit window."""
+
+    mode: str = Field(default="constant", description="'none' | 'constant' | 'end_points_weighted' | 'straight_line'")
+    end_points_pct: float = 5.0
+    fit_with_peaks: bool = False
 
 
 class AutoDetectRequest(BaseModel):
@@ -25,6 +33,7 @@ class AutoDetectRequest(BaseModel):
     mode: str = Field(default="auto", description="'auto' | 'manual'")
     manual_nums: Optional[List[int]] = None
     vary_y0: bool = False
+    baseline: Optional[BaselineSpec] = None
 
 
 class RefitSingleRequest(BaseModel):
@@ -39,6 +48,7 @@ class RefitSingleRequest(BaseModel):
     initial_wL: Optional[List[float]] = None
     initial_A: Optional[List[float]] = None
     vary_y0: bool = False
+    baseline: Optional[BaselineSpec] = None
 
 
 class CustomGroupRequest(BaseModel):
@@ -49,6 +59,7 @@ class CustomGroupRequest(BaseModel):
     range_max: Optional[float] = None
     group_id: Optional[str] = None
     vary_y0: bool = False
+    baseline: Optional[BaselineSpec] = None
 
 
 class LoadInitialExcelRequest(BaseModel):
@@ -73,6 +84,7 @@ class LudersBlockRequest(BaseModel):
     range_max: float
     peak_names: List[str] = Field(default_factory=lambda: ["fcc111a", "bcc110a", "bcc1102"])
     v3_center_cap: float = 11.65
+    baseline: Optional[BaselineSpec] = None
 
 
 @router.post("/auto-detect")
@@ -85,6 +97,7 @@ async def api_initial_auto_detect(req: AutoDetectRequest) -> Dict[str, Any]:
             mode=req.mode,
             manual_nums=req.manual_nums,
             vary_y0=req.vary_y0,
+            baseline=req.baseline.model_dump() if req.baseline else None,
         )
         return res
     except Exception as e:
@@ -119,7 +132,7 @@ async def api_initial_refit_single(req: RefitSingleRequest) -> Dict[str, Any]:
             initial_wG=req.initial_wG,
             initial_wL=req.initial_wL,
             initial_A=req.initial_A,
-            vary_y0=req.vary_y0,
+            **baseline_kwargs(req.baseline.model_dump() if req.baseline else None, req.vary_y0),
         )
         return fit_res.to_dict()
     except Exception as e:
@@ -139,6 +152,7 @@ async def api_initial_custom_group(req: CustomGroupRequest) -> Dict[str, Any]:
             range_max=req.range_max,
             group_id=req.group_id,
             vary_y0=req.vary_y0,
+            baseline=req.baseline.model_dump() if req.baseline else None,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -215,6 +229,7 @@ async def api_initial_luders_block(req: LudersBlockRequest) -> Dict[str, Any]:
             initial_wG=[float(b1["wG"]), float(b2["wG"]), float(b2["wG"])],
             initial_wL=[float(b1["wL"]), float(b2["wL"]), float(b2["wL"])],
             initial_A=[float(b1["A"]), 0.5 * float(b2["A"]), 0.5 * float(b2["A"])],
+            **baseline_kwargs(req.baseline.model_dump() if req.baseline else None),
         )
         fd = fit.to_dict()
         if fd.get("error") or len(fd.get("peaks", [])) != 3:

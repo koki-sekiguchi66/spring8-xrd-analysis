@@ -62,6 +62,13 @@ export interface PeakFitParam {
   snr: number;
 }
 
+/** Baseline of the Step 2 fit window (Origin Peak Analyzer modes). */
+export interface BaselineSpec {
+  mode: 'none' | 'constant' | 'end_points_weighted' | 'straight_line';
+  end_points_pct: number;
+  fit_with_peaks: boolean;
+}
+
 export interface CandidateFitResult {
   group_id: string;
   num: number;
@@ -79,6 +86,8 @@ export interface CandidateFitResult {
   y_fit: number[];
   residual: number[];
   components: Record<string, number[]>;
+  baseline_mode?: BaselineSpec['mode'];
+  baseline?: number[] | null;
   error?: string;
 }
 
@@ -168,6 +177,8 @@ export interface GroupBatchConfig {
   init_options?: Record<string, PeakFitParam[]>;
   /** Frame chosen in Step 2 (initial frame for 1Peak / MultiPeaks) */
   step2_num?: number;
+  /** Baseline used for the Step 2 initial fits (also for the Lüders 3-peak initial fit) */
+  init_baseline?: BaselineSpec;
   default_fit_limits?: Record<string, FitLimitConfig>;
   min_peak_separation?: number;
   suppress_before_onset?: boolean;

@@ -319,3 +319,30 @@ def test_initial_excel_blocks_roundtrip(tmp_path: Path):
     assert append_initial_block(path, lud, 280)["appended"] is True
     assert append_initial_block(path, lud, 280)["appended"] is False  # existing (possibly hand-edited) block kept
     assert read_initial_blocks(path)[-1]["peaks"] == ["fcc111a", "bcc110a", "bcc1102"]
+
+
+def test_step2_baseline_modes_origin_peak_analyzer():
+    """Peak Analyzer baselines: y0 with peaks recovers the area on an offset; end-point lines cut the tails."""
+    from backend.core.origin_voigt import fit_origin_voigt_group, window_end_baseline
+
+    x = np.arange(19.0, 21.2, 0.0046)
+    c = _tt(A_A, (2, 1, 1))
+    y = _profile(x, 300.0, c, 0.47) + 20.0 + 5.0 * (x - x[0])
+    line = window_end_baseline(x, y, "straight_line")
+    assert line[0] == pytest.approx(y[0]) and line[-1] == pytest.approx(y[-1])
+    epw = window_end_baseline(x, y, "end_points_weighted", 5.0)
+    assert np.all(np.isfinite(epw)) and epw.shape == x.shape
+
+    def area(mode, fit_with=False):
+        r = fit_origin_voigt_group(x, y, 1, "f", "g", ["bcc211"], c - 0.7, c + 0.7, baseline_mode=mode, fit_baseline_with_peaks=fit_with)
+        return r.peaks[0].A, r
+
+    a_const, r_const = area("constant")
+    a_line_fit, r_line = area("straight_line", True)
+    a_epw, r_epw = area("end_points_weighted")
+    a_none, _ = area("none")
+    assert abs(a_line_fit / 300.0 - 1.0) < 0.03  # true model (sloped background) fitted with the peak
+    assert a_none > 1.15 * 300.0 and a_epw < 0.95 * 300.0  # absorbs the offset / cuts the tails
+    assert r_const.baseline_mode == "constant" and r_const.peaks[0].y0 > 10.0
+    assert r_epw.peaks[0].y0 == 0.0 and r_epw.baseline is not None
+    assert r_line.peaks[0].y0 == pytest.approx(20.0 + 5.0 * (r_line.peaks[0].xc - x[0]), abs=2.0)
