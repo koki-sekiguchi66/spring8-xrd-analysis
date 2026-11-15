@@ -4,15 +4,18 @@ import {
   Sliders,
   ChevronDown,
   ChevronUp,
-  Activity,
-  CheckCircle2,
   ArrowRight,
-  AlertCircle,
   RefreshCw,
   LineChart,
 } from 'lucide-react';
 import { PlotlyChart } from './PlotlyChart';
-import { TutorialGuideBanner } from './TutorialGuideBanner';
+import { Button } from './ui/Button';
+import { Panel, PanelBody, PanelHeader } from './ui/Panel';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { PlotFrame } from './ui/PlotFrame';
+import { CheckboxRow, FieldLabel, SelectInput, UnitNumberInput } from './ui/Field';
+import { StatusBadge } from './ui/StatusBadge';
+import { Notice } from './ui/Notice';
 import { fmtFixed, runFittingStream } from '../lib/utils';
 import type { BatchGroupResult, FitLimitConfig, GroupBatchConfig } from '../types/xrd';
 
@@ -127,7 +130,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
 
   const handleStartBatchRun = async () => {
     if (batchConfigs.length === 0) {
-      setError('解析対象のグループが設定されていません。Step 2に戻って選択してください。');
+      setError('解析対象グループがありません。Step 2 でピークを選択してください。');
       return;
     }
 
@@ -204,7 +207,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
             setRunning(false);
             setCompletedAll(true);
           } else if (msg.type === 'error') {
-            setError(msg.detail || 'Batch fitting error');
+            setError(msg.detail || '連続フィッティング中にエラーが発生しました');
             setRunning(false);
           }
         }
@@ -243,8 +246,8 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         y: liveWaveform.y_obs,
         type: 'scatter',
         mode: 'markers',
-        name: `実測 (#${liveWaveform.num})`,
-        marker: { color: '#a1a1aa', size: 5 },
+        name: `#${liveWaveform.num}`,
+        marker: { color: '#9ca3b0', size: 4.5 },
       },
       {
         x: liveWaveform.x,
@@ -252,7 +255,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         type: 'scatter',
         mode: 'lines',
         name: '合成Voigt',
-        line: { color: '#f43f5e', width: 2.5 },
+        line: { color: '#f43f5e', width: 2.2 },
       },
     ];
     for (const pk of liveWaveform.peaks) {
@@ -266,8 +269,8 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
           mode: 'lines',
           name: pk,
           line: {
-            color: isGamma ? '#06b6d4' : '#f59e0b',
-            width: 2,
+            color: isGamma ? '#38bdf8' : '#f59e0b',
+            width: 1.8,
             dash: 'dot',
           },
         });
@@ -286,8 +289,8 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         type: 'scatter',
         mode: 'markers+lines',
         name: `2θ_${pk}`,
-        marker: { color: isGamma ? '#06b6d4' : '#f59e0b', size: 5 },
-        line: { color: isGamma ? '#06b6d4' : '#f59e0b', width: 1.5 },
+        marker: { color: isGamma ? '#38bdf8' : '#f59e0b', size: 4.5 },
+        line: { color: isGamma ? '#38bdf8' : '#f59e0b', width: 1.4 },
       };
     });
   }, [activeRows, activeGroupPeaks]);
@@ -302,8 +305,8 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         type: 'scatter',
         mode: 'markers+lines',
         name: `I_${pk}`,
-        marker: { color: isGamma ? '#06b6d4' : '#f59e0b', size: 5 },
-        line: { color: isGamma ? '#06b6d4' : '#f59e0b', width: 1.5 },
+        marker: { color: isGamma ? '#38bdf8' : '#f59e0b', size: 4.5 },
+        line: { color: isGamma ? '#38bdf8' : '#f59e0b', width: 1.4 },
       };
     });
   }, [activeRows, activeGroupPeaks]);
@@ -318,308 +321,220 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         type: 'scatter',
         mode: 'markers+lines',
         name: `FWHM_${pk}`,
-        marker: { color: isGamma ? '#06b6d4' : '#f59e0b', size: 5 },
-        line: { color: isGamma ? '#06b6d4' : '#f59e0b', width: 1.5 },
+        marker: { color: isGamma ? '#38bdf8' : '#f59e0b', size: 4.5 },
+        line: { color: isGamma ? '#38bdf8' : '#f59e0b', width: 1.4 },
       };
     });
   }, [activeRows, activeGroupPeaks]);
 
   return (
-    <div className="space-y-6">
-      <TutorialGuideBanner
-        mode="xrd"
-        stepTitle="Step 3: 全ファイル連続Voigtフィッティング ＆ リアルタイム監視"
-        summary="Step 2で確定した初期値を起点に、全フレームのX線回折データを自動で連続フィッティングします。そのまま「全ファイル連続解析スタート」を押すだけで実行でき、実行中はリアルタイムモニター画面に自動遷移します。"
-        steps={[
-          {
-            badge: 'STEP 1',
-            title: 'エンジンの確認（そのままでOK）',
-            description: '単一ピークは「1Peak」、γ+α\'重畳ペアは「2PeaksRatio」が自動選択されています。',
-          },
-          {
-            badge: 'STEP 2',
-            title: '「全ファイル連続解析スタート」をクリック',
-            description: '双方向トラッキング（初期値番号から前後へ追跡）により、ピークシフトに追従しながら連続計算します。',
-          },
-          {
-            badge: 'STEP 3',
-            title: '完了後に「Step 4: 要確認フィット一括検証へ進む」をクリック',
-            description: '全フレーム完了後、外れ値の確認・一括再フィット画面へ進みます。',
-          },
-        ]}
-        glossary={[
-          {
-            term: '双方向トラッキング (Bidirectional Tracking)',
-            meaning:
-              '初期値を取得したファイル番号（例: #900）から番号が減る方向（#900→#10）と増える方向（#900→最後）の両方向に向かって、直前フレームのフィット結果を次の初期値として引き継ぐ手法です。',
-          },
-          {
-            term: '積分強度スケーリング',
-            meaning:
-              '結晶粒回転や集合組織変化で回折ピーク全体の面積が急変しても、実測波形の面積比に合わせて初期振幅を自動補正する機能です。',
-          },
-        ]}
-      />
+    <div className="space-y-4">
+      {/* Compact Action & View Toolbar */}
+      <Panel>
+        <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <SegmentedControl
+              ariaLabel="表示切替"
+              value={subScreen}
+              onChange={setSubScreen}
+              options={[
+                {
+                  value: 'config',
+                  label: 'エンジン・拘束設定',
+                  icon: <Sliders className="size-3.5" aria-hidden="true" />,
+                  accent: 'sky',
+                },
+                {
+                  value: 'monitor',
+                  label: 'ライブモニター',
+                  icon: <LineChart className="size-3.5" aria-hidden="true" />,
+                  accent: 'sky',
+                },
+              ]}
+            />
 
-      {/* Header & Sub-screen Switcher Bar */}
-      <section className="panel-card p-5 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <span className="text-xs font-mono uppercase tracking-wider text-cyan-400">
-            STAGE 03 / BIDIRECTIONAL CONTINUOUS VOIGT FITTING &amp; LIVE STREAM
-          </span>
-          <h2 className="text-lg sm:text-xl font-bold text-zinc-100 mt-0.5">
-            全ファイル連続フィッティング ＆ リアルタイム推移モニター
-          </h2>
-          {initialExcelPath && (
-            <p className="text-sm font-mono text-emerald-400 mt-1">
-              初期値ファイル（解析ディレクトリ内）: {initialExcelPath}
-            </p>
-          )}
-          {savedOutputPath && (
-            <p className="text-sm font-mono text-cyan-300 mt-0.5">
-              解析結果Excel（解析ディレクトリに自動出力済）: {savedOutputPath}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Sub-screen toggle */}
-          <div data-tour="step3-subscreen-tabs" className="flex items-center gap-1 p-1 rounded-xl bg-zinc-950 border border-zinc-800">
-            <button
-              type="button"
-              onClick={() => setSubScreen('config')}
-              className={`px-3.5 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
-                subScreen === 'config'
-                  ? 'bg-cyan-500 text-zinc-950 shadow'
-                  : 'text-zinc-300 hover:text-zinc-100'
-              }`}
-            >
-              <Sliders className="size-4" />
-              <span>① エンジン＆拘束条件設定</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSubScreen('monitor')}
-              className={`px-3.5 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
-                subScreen === 'monitor'
-                  ? 'bg-cyan-500 text-zinc-950 shadow'
-                  : 'text-zinc-300 hover:text-zinc-100'
-              }`}
-            >
-              <LineChart className="size-4" />
-              <span>② リアルタイム波形＆推移モニター</span>
-            </button>
+            {savedOutputPath ? (
+              <span className="text-xs font-mono text-emerald-300 truncate max-w-md">
+                保存済: {savedOutputPath}
+              </span>
+            ) : initialExcelPath ? (
+              <span className="text-xs font-mono text-[#636b78] truncate max-w-md">
+                初期値: {initialExcelPath}
+              </span>
+            ) : null}
           </div>
 
-          <button
-            type="button"
-            data-tour="step3-start-btn"
-            disabled={running}
-            onClick={handleStartBatchRun}
-            className="btn-primary px-6 py-3"
-          >
-            {running ? (
-              <>
-                <RefreshCw className="size-5 animate-spin" aria-hidden="true" />
-                <span>全ファイル連続フィッティング実行中...</span>
-              </>
-            ) : (
-              <>
-                <Play className="size-5 fill-current" aria-hidden="true" />
-                <span>全ファイル連続解析スタート ({batchConfigs.length} グループ)</span>
-              </>
-            )}
-          </button>
-
-          {completedAll && (
-            <button
-              type="button"
-              onClick={onProceedStep4}
-              className="btn-emerald px-6 py-3"
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={running}
+              onClick={handleStartBatchRun}
             >
-              <CheckCircle2 className="size-5" aria-hidden="true" />
-              <span>Step 4: 要確認フィット一括検証 ＆ Excel出力へ進む</span>
-              <ArrowRight className="size-5" aria-hidden="true" />
-            </button>
-          )}
-        </div>
-      </section>
+              {running ? (
+                <>
+                  <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                  <span>解析実行中...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="size-3.5 fill-current" aria-hidden="true" />
+                  <span>連続解析を実行 ({batchConfigs.length})</span>
+                </>
+              )}
+            </Button>
 
-      {error && (
-        <div
-          role="alert"
-          className="p-4 rounded-xl bg-rose-950/60 border border-rose-500/40 text-sm text-rose-200 flex items-center gap-2.5"
-        >
-          <AlertCircle className="size-5 text-rose-400 shrink-0" aria-hidden="true" />
-          <span>{error}</span>
+            {completedAll && (
+              <Button variant="emerald" size="sm" onClick={onProceedStep4}>
+                <span>Step 4: 修復・出力へ</span>
+                <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
         </div>
-      )}
+      </Panel>
 
-      {/* Live Progress Bar */}
+      {error && <Notice tone="error">{error}</Notice>}
+
+      {/* Slim Progress Strip */}
       {progressInfo && (
-        <section className="panel-card border-cyan-500/40 p-5 space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm font-mono tabular-nums">
-            <div className="flex items-center gap-2 text-cyan-300 font-bold">
-              <Activity className="size-5 text-cyan-400" aria-hidden="true" />
-              <span>
-                Group [{progressInfo.groupIndex}/{progressInfo.totalGroups}]: {progressInfo.groupId}
-              </span>
+        <Panel className="px-4 py-2.5 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono tabular-nums">
+            <div className="flex items-center gap-2">
+              <StatusBadge tone="sky" dot>
+                {progressInfo.groupIndex}/{progressInfo.totalGroups} {progressInfo.groupId}
+              </StatusBadge>
+              <span className="text-[#9ca3b0]">#{progressInfo.currentNum}</span>
             </div>
-            <div className="flex flex-wrap items-center gap-5 text-zinc-300">
+            <div className="flex items-center gap-4 text-[#9ca3b0]">
               <span>
-                File: <strong className="text-zinc-100">#{progressInfo.currentNum}</strong>
-              </span>
-              <span>
-                進捗:{' '}
-                <strong className="text-cyan-400">
-                  {progressInfo.completedFiles} / {progressInfo.totalFiles} ({fmtFixed(progressInfo.progressPct, 1)}%)
+                進捗{' '}
+                <strong className="text-[#eceef2]">
+                  {progressInfo.completedFiles}/{progressInfo.totalFiles} (
+                  {fmtFixed(progressInfo.progressPct, 1)}%)
                 </strong>
               </span>
               <span>
-                相対残差:{' '}
-                <strong className="text-emerald-400">{fmtFixed(progressInfo.relativeResidual, 4)}</strong>
+                相対残差{' '}
+                <strong className="text-emerald-300">
+                  {fmtFixed(progressInfo.relativeResidual, 4)}
+                </strong>
               </span>
             </div>
           </div>
-
-          <div className="w-full h-3 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+          <div className="w-full h-1.5 bg-[#0a0b0e] rounded-full overflow-hidden border border-[#23262e]">
             <div
-              className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 origin-left transition-transform duration-150 ease-out"
-              style={{ transform: `scaleX(${Math.min(1, Math.max(0, progressInfo.progressPct / 100))})` }}
+              className="h-full bg-sky-400 origin-left transition-transform duration-150 ease-out"
+              style={{
+                transform: `scaleX(${Math.min(1, Math.max(0, progressInfo.progressPct / 100))})`,
+              }}
             />
           </div>
-        </section>
+        </Panel>
       )}
 
-      {/* SUB-SCREEN 1: Group Engine & Constraint Configuration */}
+      {/* SUB-SCREEN 1: Group Engine & Constraint Config */}
       {subScreen === 'config' && (
-        <section data-tour="step3-group-config" className="panel-card p-6 space-y-5 animate-fade-in">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
-            <div className="flex items-center gap-2.5">
-              <Sliders className="size-5 text-amber-400" aria-hidden="true" />
-              <div>
-                <h3 className="text-base font-bold text-zinc-100">
-                  解析対象ピーク・ペア ＆ 詳細パラメータ拘束条件
-                </h3>
-                <p className="text-sm text-zinc-400">
-                  各ピークグループの解析アルゴリズムを選択できます。詳細拘束条件は右端の矢印ボタンから展開できます。
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSubScreen('monitor')}
-              className="btn-secondary text-sm"
-            >
-              <LineChart className="size-4 text-cyan-400" />
-              <span>リアルタイム推移モニター画面を表示</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {batchConfigs.map((cfg) => {
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+          {batchConfigs.length === 0 ? (
+            <Panel className="md:col-span-2 p-8 text-center text-[13px] text-[#9ca3b0]">
+              Step 2 で初期値ピークを選択すると解析設定が表示されます
+            </Panel>
+          ) : (
+            batchConfigs.map((cfg) => {
               const isExpanded = expandedGroupId === cfg.group_id;
               const isMulti = cfg.peaks.length > 1;
               return (
-                <div
+                <Panel
                   key={cfg.group_id}
-                  className={`rounded-xl border transition-all ${
-                    activeGroupId === cfg.group_id
-                      ? 'bg-zinc-950 border-cyan-500/60 shadow-md'
-                      : 'bg-zinc-950/70 border-zinc-800'
-                  }`}
+                  className={
+                    activeGroupId === cfg.group_id ? 'border-sky-500/45' : undefined
+                  }
                 >
-                  <div className="p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="px-3.5 py-2.5 flex items-center justify-between gap-2">
                     <button
                       type="button"
                       onClick={() => setActiveGroupId(cfg.group_id)}
-                      className="text-left flex items-center gap-2.5"
+                      className="text-left flex items-center gap-2 min-w-0"
                     >
-                      <span className="text-base font-mono font-bold text-zinc-100">
+                      <span className="text-[13px] font-mono font-semibold text-[#eceef2] truncate">
                         {cfg.peaks.join(' + ')}
                       </span>
-                      <span className="px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-700 text-xs font-mono tabular-nums text-cyan-300">
-                        初期値 num=#{cfg.init_num}
-                      </span>
+                      <StatusBadge tone="neutral" mono>
+                        #{cfg.init_num}
+                      </StatusBadge>
                     </button>
 
-                    <div className="flex items-center gap-2">
-                      <select
-                        aria-label={`${cfg.group_id} 解析エンジン選択`}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <SelectInput
+                        aria-label={`${cfg.group_id} 解析エンジン`}
+                        mono
                         value={cfg.engine}
                         onChange={(e) =>
                           updateGroupConfig(cfg.group_id, {
                             engine: e.target.value as GroupBatchConfig['engine'],
                           })
                         }
-                        className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-mono text-zinc-100"
+                        className="w-40 h-7 text-xs"
                       >
                         {isMulti ? (
                           <>
-                            <option value="2PeaksRatio">2PeaksRatio (強度比R探索)</option>
-                            <option value="3PeaksLuders">3PeaksLuders (リュダース3ピーク)</option>
-                            <option value="MultiPeaks">MultiPeaks (汎用マルチ)</option>
+                            <option value="2PeaksRatio">2PeaksRatio</option>
+                            <option value="3PeaksLuders">3PeaksLuders</option>
+                            <option value="MultiPeaks">MultiPeaks</option>
                           </>
                         ) : (
-                          <option value="1Peak">1Peak (単一ピーク連続)</option>
+                          <option value="1Peak">1Peak</option>
                         )}
-                      </select>
+                      </SelectInput>
 
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="xs"
                         aria-expanded={isExpanded}
-                        aria-label={`${cfg.group_id} 詳細パラメータを展開`}
+                        aria-label={`${cfg.group_id} 詳細パラメータ`}
                         onClick={() =>
                           setExpandedGroupId(isExpanded ? null : cfg.group_id)
                         }
-                        className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300"
+                        className="px-1.5"
                       >
                         {isExpanded ? (
                           <ChevronUp className="size-4" aria-hidden="true" />
                         ) : (
                           <ChevronDown className="size-4" aria-hidden="true" />
                         )}
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
                   {isExpanded && (
-                    <div className="border-t border-zinc-800 p-4 space-y-4 text-sm bg-zinc-900/50">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="border-t border-[#23262e] p-3.5 space-y-3 bg-[#121418]">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                         <div>
-                          <label className="block text-xs text-zinc-300 mb-1">
-                            最小角度 `th_min` (°)
-                          </label>
-                          <input
-                            type="number"
+                          <FieldLabel>最小角度 th_min</FieldLabel>
+                          <UnitNumberInput
                             step="0.05"
+                            unit="deg"
                             value={cfg.th_min ?? 11.0}
                             onChange={(e) =>
                               updateGroupConfig(cfg.group_id, { th_min: Number(e.target.value) })
                             }
-                            className="input-field font-mono tabular-nums"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-zinc-300 mb-1">
-                            最大角度 `th_max` (°)
-                          </label>
-                          <input
-                            type="number"
+                          <FieldLabel>最大角度 th_max</FieldLabel>
+                          <UnitNumberInput
                             step="0.05"
+                            unit="deg"
                             value={cfg.th_max ?? 12.1}
                             onChange={(e) =>
                               updateGroupConfig(cfg.group_id, { th_max: Number(e.target.value) })
                             }
-                            className="input-field font-mono tabular-nums"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-zinc-300 mb-1">
-                            残差許容値 `residual_limit`
-                          </label>
-                          <input
-                            type="number"
+                          <FieldLabel>残差許容値</FieldLabel>
+                          <UnitNumberInput
                             step="0.1"
                             value={cfg.residual_limit}
                             onChange={(e) =>
@@ -627,15 +542,11 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                                 residual_limit: Number(e.target.value),
                               })
                             }
-                            className="input-field font-mono tabular-nums"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-zinc-300 mb-1">
-                            再試行上限 `max_attempts`
-                          </label>
-                          <input
-                            type="number"
+                          <FieldLabel>再試行上限</FieldLabel>
+                          <UnitNumberInput
                             step="1"
                             value={cfg.max_attempts}
                             onChange={(e) =>
@@ -643,15 +554,11 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                                 max_attempts: Number(e.target.value),
                               })
                             }
-                            className="input-field font-mono tabular-nums"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-zinc-300 mb-1">
-                            変態開始 `DIMT_onset_num`
-                          </label>
-                          <input
-                            type="number"
+                          <FieldLabel>変態開始 num</FieldLabel>
+                          <UnitNumberInput
                             step="10"
                             value={cfg.dimt_onset_num}
                             onChange={(e) =>
@@ -659,131 +566,100 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                                 dimt_onset_num: Number(e.target.value),
                               })
                             }
-                            className="input-field font-mono tabular-nums"
                           />
                         </div>
                         {isMulti && (
                           <div>
-                            <label className="block text-xs text-zinc-300 mb-1">
-                              初期強度比 `R` (I2/I1)
-                            </label>
-                            <input
-                              type="number"
+                            <FieldLabel>初期強度比 R</FieldLabel>
+                            <UnitNumberInput
                               step="0.02"
                               value={cfg.R}
                               onChange={(e) =>
                                 updateGroupConfig(cfg.group_id, { R: Number(e.target.value) })
                               }
-                              className="input-field font-mono tabular-nums"
                             />
                           </div>
                         )}
                       </div>
 
-                      {/* Item 6: bcc211-guided physical constraint on bcc110 center & width */}
                       {cfg.peaks.some((pk) => pk === 'bcc110' || pk === 'bcc101') && (
-                        <div className="p-3.5 rounded-xl bg-amber-950/35 border border-amber-500/40 space-y-2.5">
+                        <div className="p-2.5 rounded-md bg-[#0a0b0e] border border-amber-500/35 space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <label className="flex items-center gap-2.5 text-sm font-bold text-amber-200 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={cfg.use_bcc211_constraint ?? true}
-                                onChange={(e) =>
-                                  updateGroupConfig(cfg.group_id, {
-                                    use_bcc211_constraint: e.target.checked,
-                                  })
-                                }
-                                className="w-4 h-4 rounded border-amber-500 text-amber-400"
-                              />
-                              <span>
-                                物理拘束オプション: 孤立ピーク `bcc211(112)` から `bcc110(101)` の位置・幅を拘束 (推奨 ON)
-                              </span>
-                            </label>
-                            <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-xs font-mono text-amber-300">
-                              自動で bcc211 を先行解析して参照
-                            </span>
-                          </div>
-                          {(cfg.use_bcc211_constraint ?? true) && (
-                            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-300 pt-1">
-                              <span>
-                                ブラッグ則 (d110/d211 = √3) による理論中心角 ±Δθ_tol ＆ tanθ 歪みブロードニング則 (×0.70〜1.40)
-                              </span>
-                              <div className="flex items-center gap-2">
-                                <label className="text-amber-200 font-mono">
-                                  中心角許容幅 Δθ_tol (°):
-                                </label>
-                                <input
-                                  type="number"
+                            <CheckboxRow
+                              checked={cfg.use_bcc211_constraint ?? true}
+                              onChange={(val) =>
+                                updateGroupConfig(cfg.group_id, {
+                                  use_bcc211_constraint: val,
+                                })
+                              }
+                              label={
+                                <span className="text-xs font-medium text-amber-200">
+                                  bcc211 物理拘束 (Bragg 幾何 + tanθ 幅)
+                                </span>
+                              }
+                            />
+                            {(cfg.use_bcc211_constraint ?? true) && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-mono text-[#9ca3b0]">Δθ_tol</span>
+                                <UnitNumberInput
                                   step="0.01"
                                   min="0.005"
                                   max="0.30"
+                                  unit="deg"
                                   value={cfg.bcc110_center_tol_deg ?? 0.05}
                                   onChange={(e) =>
                                     updateGroupConfig(cfg.group_id, {
                                       bcc110_center_tol_deg: Number(e.target.value),
                                     })
                                   }
-                                  className="w-24 bg-zinc-950 border border-amber-500/50 rounded px-2 py-1 font-mono tabular-nums text-zinc-100"
+                                  className="w-28"
                                 />
                               </div>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       )}
 
                       {cfg.engine === '3PeaksLuders' && (
-                        <div className="grid grid-cols-3 gap-3 pt-2 border-t border-zinc-800">
+                        <div className="grid grid-cols-3 gap-2.5 pt-2 border-t border-[#23262e]">
                           <div>
-                            <label className="block text-xs text-zinc-300 mb-1">
-                              `undeform_initial`
-                            </label>
-                            <input
-                              type="number"
+                            <FieldLabel>undeform_initial</FieldLabel>
+                            <UnitNumberInput
                               value={cfg.undeform_initial}
                               onChange={(e) =>
                                 updateGroupConfig(cfg.group_id, {
                                   undeform_initial: Number(e.target.value),
                                 })
                               }
-                              className="input-field font-mono tabular-nums"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-zinc-300 mb-1">
-                              `undeform_end`
-                            </label>
-                            <input
-                              type="number"
+                            <FieldLabel>undeform_end</FieldLabel>
+                            <UnitNumberInput
                               value={cfg.undeform_end}
                               onChange={(e) =>
                                 updateGroupConfig(cfg.group_id, {
                                   undeform_end: Number(e.target.value),
                                 })
                               }
-                              className="input-field font-mono tabular-nums"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-zinc-300 mb-1">
-                              第3ピーク強度比 `R2`
-                            </label>
-                            <input
-                              type="number"
+                            <FieldLabel>第3ピーク比 R2</FieldLabel>
+                            <UnitNumberInput
                               step="0.1"
                               value={cfg.R2}
                               onChange={(e) =>
                                 updateGroupConfig(cfg.group_id, { R2: Number(e.target.value) })
                               }
-                              className="input-field font-mono tabular-nums"
                             />
                           </div>
                         </div>
                       )}
 
-                      {/* Per-peak `default_fit_limits` editor */}
-                      <div className="pt-2 border-t border-zinc-800 space-y-2.5">
-                        <div className="text-xs font-bold text-zinc-300">
-                          前ステップ追従拘束 (`default_fit_limits`)
+                      <div className="pt-2 border-t border-[#23262e] space-y-2">
+                        <div className="text-xs font-medium text-[#9ca3b0]">
+                          ステップ追従拘束 (default_fit_limits)
                         </div>
                         {cfg.peaks.map((pkName, pkIdx) => {
                           const vKey = `v${pkIdx + 1}`;
@@ -792,148 +668,44 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                           return (
                             <div
                               key={pkName}
-                              className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2"
+                              className="p-2.5 rounded-md bg-[#0a0b0e] border border-[#23262e] space-y-2"
                             >
-                              <div className="text-xs font-mono text-cyan-400 font-bold">
+                              <div className="text-[11px] font-mono text-sky-300 font-semibold">
                                 {vKey}: {pkName}
                               </div>
-                              <div className="grid grid-cols-4 gap-2 text-xs">
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">center_min</span>
-                                  <input
-                                    type="number"
-                                    step="0.005"
-                                    value={lim.center_min_offset}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'center_min_offset',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">center_max</span>
-                                  <input
-                                    type="number"
-                                    step="0.005"
-                                    value={lim.center_max_offset}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'center_max_offset',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">amp_min_fac</span>
-                                  <input
-                                    type="number"
-                                    step="0.05"
-                                    value={lim.amplitude_min_factor}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'amplitude_min_factor',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">amp_max_fac</span>
-                                  <input
-                                    type="number"
-                                    step="0.05"
-                                    value={lim.amplitude_max_factor}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'amplitude_max_factor',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">sigma_min_fac</span>
-                                  <input
-                                    type="number"
-                                    step="0.05"
-                                    value={lim.sigma_min_factor}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'sigma_min_factor',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">sigma_max_fac</span>
-                                  <input
-                                    type="number"
-                                    step="0.05"
-                                    value={lim.sigma_max_factor}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'sigma_max_factor',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">gamma_min_fac</span>
-                                  <input
-                                    type="number"
-                                    step="0.05"
-                                    value={lim.gamma_min_factor}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'gamma_min_factor',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
-                                <div>
-                                  <span className="text-zinc-400 block mb-1">gamma_max_fac</span>
-                                  <input
-                                    type="number"
-                                    step="0.05"
-                                    value={lim.gamma_max_factor}
-                                    onChange={(e) =>
-                                      updatePeakLimit(
-                                        cfg.group_id,
-                                        pkIdx,
-                                        'gamma_max_factor',
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono tabular-nums"
-                                  />
-                                </div>
+                              <div className="grid grid-cols-4 gap-2 text-[11px]">
+                                {(
+                                  [
+                                    ['center_min_offset', 'c_min', 0.005],
+                                    ['center_max_offset', 'c_max', 0.005],
+                                    ['amplitude_min_factor', 'A_min', 0.05],
+                                    ['amplitude_max_factor', 'A_max', 0.05],
+                                    ['sigma_min_factor', 'σ_min', 0.05],
+                                    ['sigma_max_factor', 'σ_max', 0.05],
+                                    ['gamma_min_factor', 'γ_min', 0.05],
+                                    ['gamma_max_factor', 'γ_max', 0.05],
+                                  ] as const
+                                ).map(([fieldKey, shortLabel, stepVal]) => (
+                                  <div key={fieldKey}>
+                                    <span className="text-[#636b78] font-mono block mb-0.5">
+                                      {shortLabel}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      step={stepVal}
+                                      value={lim[fieldKey]}
+                                      onChange={(e) =>
+                                        updatePeakLimit(
+                                          cfg.group_id,
+                                          pkIdx,
+                                          fieldKey,
+                                          Number(e.target.value)
+                                        )
+                                      }
+                                      className="w-full h-7 bg-[#16181d] border border-[#2a2e38] rounded px-1.5 font-mono tabular-nums text-[#eceef2] focus:border-sky-500/70 focus:outline-none"
+                                    />
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           );
@@ -941,120 +713,96 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                       </div>
                     </div>
                   )}
-                </div>
+                </Panel>
               );
-            })}
-          </div>
-        </section>
+            })
+          )}
+        </div>
       )}
 
-      {/* SUB-SCREEN 2: Real-Time Monitor (Waveform & Parameter Trends) */}
+      {/* SUB-SCREEN 2: Real-Time Waveform & Trend Monitor */}
       {subScreen === 'monitor' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
-          {/* Left: Live Currently Processing Waveform Monitor */}
-          <section className="lg:col-span-5 panel-card p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div>
-                <span className="text-xs font-mono text-cyan-400">LIVE VOIGT WAVEFORM</span>
-                <h3 className="text-base font-bold text-zinc-100">
-                  リアルタイム波形フィット＆成分分離モニター
-                </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          <PlotFrame
+            className="lg:col-span-5"
+            title="ライブ波形フィット"
+            subtitle={liveWaveform ? `#${liveWaveform.num} (${liveWaveform.filename})` : undefined}
+          >
+            {liveWaveform ? (
+              <PlotlyChart
+                data={waveformTraces}
+                layout={{
+                  margin: { l: 50, r: 14, t: 14, b: 38 },
+                  xaxis: { title: '2θ (deg)' },
+                  yaxis: { title: 'Intensity (a.u.)' },
+                }}
+                className="w-full h-[460px]"
+              />
+            ) : (
+              <div className="h-[460px] flex items-center justify-center text-[13px] text-[#636b78]">
+                連続解析を実行すると処理中の波形が表示されます
               </div>
-              {liveWaveform && (
-                <span className="px-3 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-sm font-mono tabular-nums text-cyan-300 font-bold">
-                  #{liveWaveform.num} ({liveWaveform.filename})
-                </span>
-              )}
-            </div>
+            )}
+          </PlotFrame>
 
-            <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2">
-              {liveWaveform ? (
-                <PlotlyChart
-                  data={waveformTraces}
-                  layout={{
-                    margin: { l: 54, r: 18, t: 22, b: 42 },
-                    xaxis: { title: '2θ (deg.)' },
-                    yaxis: { title: 'Intensity (a.u.)' },
-                  }}
-                  className="w-full h-[360px]"
-                />
-              ) : (
-                <div className="h-[360px] flex items-center justify-center text-sm text-zinc-400">
-                  「全ファイル連続解析スタート」を押すと処理中波形がライブ描画されます。
+          <Panel className="lg:col-span-7">
+            <PanelHeader
+              title="パラメータ推移"
+              actions={
+                <div className="flex flex-wrap items-center gap-1">
+                  {batchConfigs.map((cfg) => (
+                    <button
+                      key={cfg.group_id}
+                      type="button"
+                      onClick={() => setActiveGroupId(cfg.group_id)}
+                      className={`h-6 px-2 rounded text-xs font-mono border transition-colors ${
+                        activeGroupId === cfg.group_id
+                          ? 'bg-sky-500/15 border-sky-500/50 text-sky-300 font-semibold'
+                          : 'bg-[#0a0b0e] border-[#23262e] text-[#9ca3b0] hover:text-[#eceef2]'
+                      }`}
+                    >
+                      {cfg.peaks.join('+')}
+                    </button>
+                  ))}
                 </div>
-              )}
-            </div>
-          </section>
-
-          {/* Right: Live Evolution Scatter Plots (2theta, I, FWHM vs num) */}
-          <section className="lg:col-span-7 panel-card p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
-              <div>
-                <span className="text-xs font-mono text-amber-400">PARAMETER EVOLUTION vs FILE NUM</span>
-                <h3 className="text-base font-bold text-zinc-100">
-                  回折角 2θ / 面積強度 I / 半値幅 FWHM リアルタイム推移グラフ
-                </h3>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {batchConfigs.map((cfg) => (
-                  <button
-                    key={cfg.group_id}
-                    type="button"
-                    onClick={() => setActiveGroupId(cfg.group_id)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-mono border transition-all ${
-                      activeGroupId === cfg.group_id
-                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 font-bold'
-                        : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {cfg.peaks.join('+')}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2">
+              }
+            />
+            <PanelBody className="space-y-2.5 p-3">
+              <div className="rounded-md bg-[#0a0b0e] border border-[#23262e] p-1.5">
                 <PlotlyChart
                   data={trend2thTraces}
                   layout={{
-                    title: { text: '1. 回折角 2θ (deg.) vs ファイル番号 (num)', font: { size: 13, color: '#e4e4e7' } },
-                    margin: { l: 62, r: 18, t: 30, b: 36 },
-                    xaxis: { title: 'File Number (num)' },
-                    yaxis: { title: '2θ (deg.)' },
+                    margin: { l: 56, r: 14, t: 18, b: 28 },
+                    xaxis: { title: '' },
+                    yaxis: { title: '2θ (deg)' },
                   }}
-                  className="w-full h-48"
+                  className="w-full h-36"
                 />
               </div>
-
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2">
+              <div className="rounded-md bg-[#0a0b0e] border border-[#23262e] p-1.5">
                 <PlotlyChart
                   data={trendAreaTraces}
                   layout={{
-                    title: { text: '2. 積分面積強度 I (a.u.) vs ファイル番号 (num)', font: { size: 13, color: '#e4e4e7' } },
-                    margin: { l: 62, r: 18, t: 30, b: 36 },
-                    xaxis: { title: 'File Number (num)' },
-                    yaxis: { title: 'Area Intensity I' },
+                    margin: { l: 56, r: 14, t: 18, b: 28 },
+                    xaxis: { title: '' },
+                    yaxis: { title: '面積強度 I' },
                   }}
-                  className="w-full h-48"
+                  className="w-full h-36"
                 />
               </div>
-
-              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2">
+              <div className="rounded-md bg-[#0a0b0e] border border-[#23262e] p-1.5">
                 <PlotlyChart
                   data={trendFwhmTraces}
                   layout={{
-                    title: { text: '3. 合成半値幅 FWHM (deg.) vs ファイル番号 (num)', font: { size: 13, color: '#e4e4e7' } },
-                    margin: { l: 62, r: 18, t: 30, b: 36 },
-                    xaxis: { title: 'File Number (num)' },
-                    yaxis: { title: 'FWHM (deg.)' },
+                    margin: { l: 56, r: 14, t: 18, b: 36 },
+                    xaxis: { title: 'num' },
+                    yaxis: { title: 'FWHM (deg)' },
                   }}
-                  className="w-full h-48"
+                  className="w-full h-36"
                 />
               </div>
-            </div>
-          </section>
+            </PanelBody>
+          </Panel>
         </div>
       )}
     </div>

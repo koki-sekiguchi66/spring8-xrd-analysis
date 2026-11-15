@@ -1,19 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Sparkles,
   RefreshCw,
   ArrowRight,
   FileSpreadsheet,
-  Sliders,
   Plus,
-  AlertTriangle,
   Layers,
   CheckSquare,
   Square,
   ZoomIn,
 } from 'lucide-react';
 import { PlotlyChart } from './PlotlyChart';
-import { TutorialGuideBanner } from './TutorialGuideBanner';
+import { Button } from './ui/Button';
+import { Panel, PanelBody, PanelHeader } from './ui/Panel';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { PlotFrame } from './ui/PlotFrame';
+import { TextInput, UnitNumberInput } from './ui/Field';
+import { StatusBadge } from './ui/StatusBadge';
+import { Notice } from './ui/Notice';
 import { apiPost, fmtFixed } from '../lib/utils';
 import type {
   CandidateFitResult,
@@ -45,7 +48,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
   const [manualInput, setManualInput] = useState<string>('50, 900');
-  const [varyY0, setVaryY0] = useState<boolean>(false);
+  const [varyY0] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [savingExcel, setSavingExcel] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +124,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
       .map((s) => parseInt(s.trim(), 10))
       .filter((n) => !Number.isNaN(n) && n > 0);
     if (nums.length === 0) {
-      setError('手動指定モードでは1つ以上のファイル番号 (例: 50, 900) を入力してください。');
+      setError('1つ以上のファイル番号（例: 50, 900）を指定してください。');
       return;
     }
     runDetection('manual', nums);
@@ -224,7 +227,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
     if (!initialData) return;
     const chosenGroups = initialData.candidate_groups.filter((g) => g.selected);
     if (chosenGroups.length === 0) {
-      setError('連続解析を実行するピークまたはペアを少なくとも1つ選択してください。');
+      setError('解析対象ピークを少なくとも1つ選択してください。');
       return;
     }
 
@@ -297,30 +300,30 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         y: activeProfile.y,
         type: 'scattergl',
         mode: 'lines',
-        name: `Profile #${activeProfile.num} (${activeProfile.filename})`,
-        line: { color: '#e4e4e7', width: 1.5 },
+        name: `#${activeProfile.num}`,
+        line: { color: '#d4d8e0', width: 1.4 },
       },
       {
         x: gammaMarkers.map((m) => m.observed_2th),
         y: gammaMarkers.map((m) => m.intensity + 450),
-        text: gammaMarkers.map((m) => `γ ${m.name} (${fmtFixed(m.observed_2th, 2)}°)`),
+        text: gammaMarkers.map((m) => `γ ${m.name}`),
         type: 'scatter',
         mode: 'markers+text',
         textposition: 'top center',
-        textfont: { size: 12, color: '#22d3ee' },
-        name: 'γ-FCC Austenite (オーステナイト相)',
-        marker: { color: '#06b6d4', size: 10, symbol: 'triangle-down' },
+        textfont: { size: 11, color: '#38bdf8' },
+        name: 'γ-FCC',
+        marker: { color: '#38bdf8', size: 8, symbol: 'triangle-down' },
       },
       {
         x: alphaMarkers.map((m) => m.observed_2th),
         y: alphaMarkers.map((m) => m.intensity + 450),
-        text: alphaMarkers.map((m) => `α' ${m.name} (${fmtFixed(m.observed_2th, 2)}°)`),
+        text: alphaMarkers.map((m) => `α' ${m.name}`),
         type: 'scatter',
         mode: 'markers+text',
         textposition: 'top center',
-        textfont: { size: 12, color: '#fbbf24' },
-        name: "α'-BCC Martensite (マルテンサイト相)",
-        marker: { color: '#f59e0b', size: 10, symbol: 'diamond' },
+        textfont: { size: 11, color: '#f59e0b' },
+        name: "α'-BCC",
+        marker: { color: '#f59e0b', size: 8, symbol: 'diamond' },
       },
     ];
   }, [activeProfile]);
@@ -345,16 +348,16 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         y: activeFit.y_obs,
         type: 'scatter',
         mode: 'markers',
-        name: `実測データ (#${focusedGroup.selected_num})`,
-        marker: { color: '#a1a1aa', size: 6 },
+        name: `実測 (#${focusedGroup.selected_num})`,
+        marker: { color: '#9ca3b0', size: 5 },
       },
       {
         x: activeFit.x,
         y: activeFit.y_fit,
         type: 'scatter',
         mode: 'lines',
-        name: 'Origin互換 Voigt 合成フィット',
-        line: { color: '#f43f5e', width: 2.8 },
+        name: 'Voigt 合成',
+        line: { color: '#f43f5e', width: 2.5 },
       },
     ];
 
@@ -368,13 +371,13 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
           type: 'scatter',
           mode: 'lines',
           fill: 'tozeroy',
-          name: `${pkName} (${isGamma ? 'γ-FCC' : "α'-BCC"})`,
+          name: pkName,
           line: {
-            color: isGamma ? '#06b6d4' : '#f59e0b',
-            width: 2,
+            color: isGamma ? '#38bdf8' : '#f59e0b',
+            width: 1.8,
             dash: 'dot',
           },
-          fillcolor: isGamma ? 'rgba(6, 182, 212, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+          fillcolor: isGamma ? 'rgba(56, 189, 248, 0.10)' : 'rgba(245, 158, 11, 0.10)',
         });
       }
     }
@@ -384,8 +387,8 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
       y: activeFit.residual,
       type: 'scatter',
       mode: 'lines',
-      name: '残差 Residual',
-      line: { color: '#10b981', width: 1.5 },
+      name: '残差',
+      line: { color: '#10b981', width: 1.4 },
       opacity: 0.85,
     });
 
@@ -393,401 +396,302 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
   }, [focusedGroup]);
 
   return (
-    <div className="space-y-6">
-      {/* Beginner Tutorial Banner */}
-      <TutorialGuideBanner
-        mode="xrd"
-        stepTitle="Step 2: 複数ファイル初期値探索 ＆ 面指数自動同定（Origin完全互換Voigt）"
-        summary="変形初期（オーステナイト単相 #50）と変形後期（マルテンサイト生成後 #900）の2つの代表ファイルから、各ピークの初期値を自動算出します。"
-        steps={[
-          {
-            badge: 'STEP 1',
-            title: '連続解析したいピーク・重畳ペアにチェックを入れる',
-            description:
-              '下のカード一覧から、連続フィッティングしたいピーク（例: fcc200、fcc111+bcc110、bcc211 など）にチェックを入れます。',
-          },
-          {
-            badge: 'STEP 2',
-            title: '必要に応じて「② 拡大フィット確認・微調整」で波形を確認',
-            description:
-              '各カードの「拡大確認・微調整」を押すと、大画面で1つのピークのVoigt成分分離波形を確認・調整できます。',
-          },
-          {
-            badge: 'STEP 3',
-            title: '_initial.xlsx に保存して Step 3（連続フィッティング）へ進む',
-            description:
-              '緑色の「採用初期値を _initial.xlsx に保存して Step 3 へ進む」ボタンを押すと初期値ファイルが自動生成されます。',
-          },
-        ]}
-        glossary={[
-          {
-            term: 'なぜ変形初期 (#50) と変形後期 (#900) の2ファイルを使うの？',
-            meaning:
-              '変形初期はオーステナイト相（γ-FCC）が強く孤立しており、変形後期は加工誘起マルテンサイト相（α\'-BCC）が明瞭に現れるため、両方を見ることで全ピークの正確な初期値が得られます。',
-          },
-          {
-            term: 'Origin完全互換Voigt関数 (wG, wL, FWHM) とは？',
-            meaning:
-              'ガウス幅 wG とローレンツ幅 wL を独立変数として最適化し、Originと同じ Olivero-Longbothum 近似式で合成半値幅 FWHM を算出します。',
-          },
-        ]}
-      />
+    <div className="space-y-4">
+      {/* Compact Toolbar */}
+      <Panel>
+        <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <SegmentedControl
+              ariaLabel="表示切替"
+              value={subScreen}
+              onChange={setSubScreen}
+              options={[
+                {
+                  value: 'overview',
+                  label: '全体・候補選択',
+                  icon: <Layers className="size-3.5" aria-hidden="true" />,
+                  accent: 'sky',
+                },
+                {
+                  value: 'detail',
+                  label: '拡大フィット調整',
+                  icon: <ZoomIn className="size-3.5" aria-hidden="true" />,
+                  accent: 'sky',
+                },
+              ]}
+            />
 
-      {/* Top Mode & Sub-Screen Switch Bar */}
-      <section className="panel-card p-5 flex flex-wrap items-center justify-between gap-4">
-        <div data-tour="step2-subscreen-tabs" className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setSubScreen('overview')}
-            className={`px-5 py-3 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center gap-2 ${
-              subScreen === 'overview'
-                ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                : 'bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700'
-            }`}
-          >
-            <Layers className="w-5 h-5" />
-            <span>① 全体プロファイル ＆ 解析ピーク候補の選択</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSubScreen('detail')}
-            className={`px-5 py-3 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center gap-2 ${
-              subScreen === 'detail'
-                ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                : 'bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700'
-            }`}
-          >
-            <ZoomIn className="w-5 h-5" />
-            <span>② 個別ピーク拡大Voigtフィット確認・微調整</span>
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Auto / Manual Switch */}
-          <div className="inline-flex rounded-xl bg-zinc-950 p-1 border border-zinc-800">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('auto');
-                runDetection('auto');
+            <SegmentedControl
+              ariaLabel="代表ファイル選出モード"
+              value={mode}
+              onChange={(m) => {
+                setMode(m);
+                if (m === 'auto') runDetection('auto');
               }}
-              className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors ${
-                mode === 'auto'
-                  ? 'bg-cyan-500 text-zinc-950'
-                  : 'text-zinc-300 hover:text-white'
-              }`}
-            >
-              自動選出 (初期γ + 後期γ+α&apos;)
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('manual')}
-              className={`px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors ${
-                mode === 'manual'
-                  ? 'bg-amber-500 text-zinc-950'
-                  : 'text-zinc-300 hover:text-white'
-              }`}
-            >
-              手動 `num` 指定
-            </button>
+              options={[
+                { value: 'auto', label: '自動選出', accent: 'neutral' },
+                { value: 'manual', label: '手動指定', accent: 'amber' },
+              ]}
+            />
+
+            {mode === 'manual' && (
+              <div className="flex items-center gap-1.5">
+                <TextInput
+                  aria-label="手動指定するファイル番号"
+                  mono
+                  value={manualInput}
+                  onChange={(e) => setManualInput(e.target.value)}
+                  placeholder="50, 900"
+                  className="w-32 tabular-nums"
+                />
+                <Button variant="amber" size="sm" onClick={handleManualRun}>
+                  <Plus className="size-3.5" aria-hidden="true" />
+                  <span>再探索</span>
+                </Button>
+              </div>
+            )}
+
+            {loading && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-mono text-sky-300">
+                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                <span>探索中...</span>
+              </span>
+            )}
           </div>
 
-          {mode === 'manual' && (
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                aria-label="手動指定するファイル番号リスト"
-                value={manualInput}
-                onChange={(e) => setManualInput(e.target.value)}
-                placeholder="50, 200, 900"
-                className="w-40 input-field py-2 text-sm font-mono tabular-nums"
-              />
-              <button
-                type="button"
-                onClick={handleManualRun}
-                className="btn-amber py-2 px-3.5 text-sm"
-              >
-                <Plus className="w-4 h-4" />
-                <span>再探索</span>
-              </button>
-            </div>
-          )}
-
-          <button
-            type="button"
-            data-tour="step2-save-proceed-btn"
+          <Button
+            variant="emerald"
+            size="sm"
             disabled={savingExcel || !initialData}
             onClick={handleSaveAndProceed}
-            className="btn-emerald"
+            title={`${specimenName}_initial.xlsx を保存して Step 3 へ進みます`}
           >
-            <FileSpreadsheet className="w-5 h-5" />
+            <FileSpreadsheet className="size-3.5" aria-hidden="true" />
             <span>
               {savingExcel
-                ? '初期値Excel生成中...'
-                : `採用初期値を ${specimenName}_initial.xlsx に保存して Step 3 へ`}
+                ? '保存中...'
+                : `${specimenName || '試料'}_initial.xlsx 保存`}
             </span>
-            <ArrowRight className="w-5 h-5" />
-          </button>
+            <ArrowRight className="size-3.5" aria-hidden="true" />
+          </Button>
         </div>
-      </section>
+      </Panel>
 
-      {error && (
-        <div
-          role="alert"
-          className="p-4 rounded-xl bg-rose-950/60 border border-rose-500/40 text-sm text-rose-200 flex items-center gap-2.5"
-        >
-          <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <Notice tone="error">{error}</Notice>}
 
-      {/* =====================================================================
-          SUB-SCREEN 2-A: Full Profile + Clean Peak Candidate Selection Grid
-         ===================================================================== */}
+      {/* SUB-SCREEN A: Full Profile & Candidate Grid */}
       {initialData && subScreen === 'overview' && (
-        <div className="space-y-6">
-          {/* Full Diffraction Profile Card */}
-          <section className="panel-card p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3 flex-wrap">
-                <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-cyan-400" />
-                  全体回折プロファイル ＆ 結晶学的面指数自動同定 (9面指数)
-                </h3>
-                <span className="px-2.5 py-1 rounded-lg bg-cyan-950/70 border border-cyan-500/40 text-xs font-mono text-cyan-200">
-                  γ-FCC: fcc111, fcc200, fcc220, fcc311, fcc222
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-amber-950/70 border border-amber-500/40 text-xs font-mono text-amber-200">
-                  α&apos;-BCC: bcc110, bcc200, bcc211, bcc220
-                </span>
-              </div>
-
+        <div className="space-y-4">
+          <PlotFrame
+            title="全体回折プロファイル"
+            subtitle={`#${activeProfileNum} / 変態開始推定 #${initialData.dimt_onset_estimate}`}
+            toolbar={
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-medium text-zinc-300">表示代表ファイル:</span>
+                <StatusBadge tone="sky" dot>
+                  γ-FCC (5面)
+                </StatusBadge>
+                <StatusBadge tone="amber" dot>
+                  α&apos;-BCC (4面)
+                </StatusBadge>
+                <div className="h-4 w-px bg-[#23262e]" />
                 {initialData.selected_nums.map((n) => (
                   <button
                     key={n}
                     type="button"
                     onClick={() => setActiveProfileNum(n)}
-                    className={`px-3.5 py-1.5 rounded-lg text-sm font-mono tabular-nums border transition-colors ${
+                    className={`h-6 px-2.5 rounded text-xs font-mono tabular-nums border transition-colors ${
                       activeProfileNum === n
-                        ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold'
-                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:text-white'
+                        ? 'bg-sky-500/15 border-sky-500/50 text-sky-300 font-semibold'
+                        : 'bg-[#0a0b0e] border-[#23262e] text-[#9ca3b0] hover:text-[#eceef2]'
                     }`}
                   >
-                    num=#{n}{' '}
+                    #{n}
                     {n === initialData.early_num
-                      ? '(変形初期 γ単相)'
+                      ? ' 初期'
                       : n === initialData.late_num
-                      ? "(変形後期 γ+α'二相)"
+                      ? ' 後期'
                       : ''}
                   </button>
                 ))}
               </div>
-            </div>
+            }
+          >
+            <PlotlyChart
+              data={fullProfileTraces}
+              layout={{
+                margin: { l: 56, r: 16, t: 16, b: 40 },
+                xaxis: { title: '2θ (deg)', range: [10.5, 25.0] },
+                yaxis: { title: 'Intensity (a.u.)', range: [-200, 18000] },
+              }}
+              className="w-full h-64"
+            />
+          </PlotFrame>
 
-            <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2">
-              <PlotlyChart
-                data={fullProfileTraces}
-                layout={{
-                  title: {
-                    text: `全体XRD回折プロファイル — num=#${activeProfileNum} (推定マルテンサイト変態開始: num≈#${initialData.dimt_onset_estimate})`,
-                    font: { size: 14, color: '#e4e4e7' },
-                  },
-                  xaxis: { title: '回折角 2θ (deg.)', range: [10.5, 25.0] },
-                  yaxis: { title: '強度 Intensity (a.u.)', range: [-200, 18000] },
-                }}
-                className="w-full h-72"
-              />
-            </div>
-          </section>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {initialData.candidate_groups.map((group) => {
+              const activeFit = group.fits_by_num[String(group.selected_num)];
+              const isMulti = group.category === 'multi_pair';
 
-          {/* Clean Candidate Selection Grid */}
-          <section data-tour="step2-candidate-cards" className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-lg font-bold text-zinc-100">
-                解析対象ピーク・重畳ペアの選択（チェックを入れた項目を連続解析します）
-              </h3>
-              <span className="text-sm text-zinc-300">
-                各カードの「拡大確認・微調整」を押すと大画面でVoigtフィット波形を調整できます
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {initialData.candidate_groups.map((group) => {
-                const activeFit = group.fits_by_num[String(group.selected_num)];
-                const isMulti = group.category === 'multi_pair';
-
-                return (
-                  <div
-                    key={group.group_id}
-                    className={`rounded-xl border p-5 flex flex-col justify-between gap-4 transition-all ${
-                      group.selected
-                        ? isMulti
-                          ? 'bg-zinc-900/95 border-amber-500/60 shadow-lg'
-                          : 'bg-zinc-900/95 border-cyan-500/60 shadow-lg'
-                        : 'bg-zinc-900/40 border-zinc-800 opacity-75'
-                    }`}
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleToggleGroupSelected(group.group_id, !group.selected)
-                          }
-                          className="flex items-start gap-3 text-left"
-                        >
-                          {group.selected ? (
-                            <CheckSquare className="w-6 h-6 text-cyan-400 shrink-0 mt-0.5" />
-                          ) : (
-                            <Square className="w-6 h-6 text-zinc-500 shrink-0 mt-0.5" />
-                          )}
-                          <div>
-                            <div className="text-base sm:text-lg font-bold text-zinc-100">
-                              {group.label}
-                            </div>
-                            <p className="text-xs sm:text-sm text-zinc-300 mt-0.5">
-                              {group.description}
-                            </p>
-                          </div>
-                        </button>
-
-                        {activeFit && !activeFit.error && (
-                          <span
-                            className={`px-2.5 py-1 rounded-lg text-xs font-mono tabular-nums font-bold shrink-0 ${
-                              activeFit.r_squared >= 0.99
-                                ? 'bg-emerald-950/90 border border-emerald-500/40 text-emerald-300'
-                                : 'bg-zinc-800 text-zinc-200'
-                            }`}
-                          >
-                            R² = {fmtFixed(activeFit.r_squared, 4)}
-                          </span>
+              return (
+                <div
+                  key={group.group_id}
+                  className={`rounded-lg border p-3.5 flex flex-col justify-between gap-3 transition-colors ${
+                    group.selected
+                      ? isMulti
+                        ? 'bg-[#16181d] border-amber-500/45'
+                        : 'bg-[#16181d] border-sky-500/45'
+                      : 'bg-[#121418] border-[#23262e] opacity-60'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleToggleGroupSelected(group.group_id, !group.selected)
+                        }
+                        className="flex items-start gap-2 text-left min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 rounded"
+                      >
+                        {group.selected ? (
+                          <CheckSquare className="size-4 text-sky-400 shrink-0 mt-0.5" aria-hidden="true" />
+                        ) : (
+                          <Square className="size-4 text-[#636b78] shrink-0 mt-0.5" aria-hidden="true" />
                         )}
-                      </div>
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-semibold text-[#eceef2] truncate">
+                            {group.label}
+                          </div>
+                          <div className="text-xs text-[#9ca3b0] truncate mt-0.5">
+                            {group.description}
+                          </div>
+                        </div>
+                      </button>
 
-                      {/* Source num radio */}
-                      <div className="flex flex-wrap items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5">
-                        <span className="text-xs font-medium text-zinc-400">採用代表ファイル:</span>
+                      {activeFit && !activeFit.error && (
+                        <StatusBadge
+                          tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
+                          mono
+                        >
+                          R² {fmtFixed(activeFit.r_squared, 4)}
+                        </StatusBadge>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-[#0a0b0e] border border-[#23262e]">
+                      <span className="text-[11px] text-[#636b78]">代表ファイル</span>
+                      <div className="flex items-center gap-1">
                         {initialData.selected_nums.map((numOpt) => (
                           <button
                             key={numOpt}
                             type="button"
                             onClick={() => handleChangeGroupNum(group.group_id, numOpt)}
-                            className={`px-2.5 py-1 rounded-md text-xs font-mono tabular-nums transition-colors ${
+                            className={`h-5 px-2 rounded text-[11px] font-mono tabular-nums transition-colors ${
                               group.selected_num === numOpt
-                                ? 'bg-cyan-500 text-zinc-950 font-bold'
-                                : 'bg-zinc-900 text-zinc-300 hover:text-white'
+                                ? 'bg-sky-500 text-zinc-950 font-semibold'
+                                : 'bg-[#16181d] text-[#9ca3b0] hover:text-[#eceef2]'
                             }`}
                           >
                             #{numOpt}
-                            {numOpt === group.recommended_num && ' (推奨)'}
+                            {numOpt === group.recommended_num ? '*' : ''}
                           </button>
                         ))}
                       </div>
-
-                      {/* Compact Parameter Summary */}
-                      {activeFit && activeFit.peaks && (
-                        <div className="space-y-1.5 bg-zinc-950/80 border border-zinc-800/80 rounded-lg p-3 font-mono text-xs sm:text-sm tabular-nums">
-                          {activeFit.peaks.map((pk) => {
-                            const isGamma = pk.peak_name.startsWith('fcc');
-                            return (
-                              <div
-                                key={pk.peak_name}
-                                className="flex items-center justify-between gap-2"
-                              >
-                                <span
-                                  className={`font-bold ${
-                                    isGamma ? 'text-cyan-300' : 'text-amber-300'
-                                  }`}
-                                >
-                                  {pk.peak_name}
-                                </span>
-                                <span className="text-zinc-200">
-                                  2θ={fmtFixed(pk.xc, 3)}° | A={fmtFixed(pk.A, 0)} | FWHM=
-                                  {fmtFixed(pk.FWHM, 4)}°
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFocusedGroupId(group.group_id);
-                        setSubScreen('detail');
-                      }}
-                      className="btn-secondary w-full py-2 text-sm"
-                    >
-                      <ZoomIn className="w-4 h-4 text-cyan-400" />
-                      <span>拡大Voigtフィット波形を確認・微調整 ▶</span>
-                    </button>
+                    {activeFit && activeFit.peaks && (
+                      <div className="space-y-1 px-2.5 py-2 rounded bg-[#0a0b0e] border border-[#23262e] font-mono text-xs tabular-nums">
+                        {activeFit.peaks.map((pk) => {
+                          const isGamma = pk.peak_name.startsWith('fcc');
+                          return (
+                            <div
+                              key={pk.peak_name}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span
+                                className={`font-semibold ${
+                                  isGamma ? 'text-sky-300' : 'text-amber-300'
+                                }`}
+                              >
+                                {pk.peak_name}
+                              </span>
+                              <span className="text-[#9ca3b0]">
+                                {fmtFixed(pk.xc, 3)}° · A={fmtFixed(pk.A, 0)} · W={fmtFixed(pk.FWHM, 4)}°
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </section>
+
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    block
+                    onClick={() => {
+                      setFocusedGroupId(group.group_id);
+                      setSubScreen('detail');
+                    }}
+                  >
+                    <ZoomIn className="size-3.5 text-sky-400" aria-hidden="true" />
+                    <span>拡大フィット調整</span>
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {/* =====================================================================
-          SUB-SCREEN 2-B: Focused Single-Group Large Voigt Fit Inspector
-         ===================================================================== */}
+      {/* SUB-SCREEN B: Focused Single-Group Inspector */}
       {initialData && subScreen === 'detail' && focusedGroup && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Group Selector List */}
-          <div className="lg:col-span-4 panel-card p-5 space-y-3">
-            <h3 className="text-base font-bold text-zinc-100 border-b border-zinc-800 pb-3">
-              確認・微調整するピーク候補を選択
-            </h3>
-            <div className="space-y-2">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          <Panel className="lg:col-span-3">
+            <PanelHeader title="ピークグループ" />
+            <div className="p-2 space-y-1">
               {initialData.candidate_groups.map((g) => {
                 const isCurrent = g.group_id === focusedGroup.group_id;
                 const fit = g.fits_by_num[String(g.selected_num)];
                 return (
                   <div
                     key={g.group_id}
-                    onClick={() => setFocusedGroupId(g.group_id)}
-                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between gap-2 ${
+                    className={`px-2.5 py-2 rounded-md border flex items-center justify-between gap-2 transition-colors ${
                       isCurrent
-                        ? 'bg-cyan-500/20 border-cyan-400 text-zinc-100'
-                        : 'bg-zinc-950/70 border-zinc-800 text-zinc-300 hover:bg-zinc-800/60'
+                        ? 'bg-[#1c1f26] border-sky-500/50 text-[#eceef2]'
+                        : 'bg-transparent border-transparent text-[#9ca3b0] hover:bg-[#16181d]'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <input
                         type="checkbox"
+                        aria-label={`${g.label} を解析対象に含める`}
                         checked={g.selected}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          handleToggleGroupSelected(g.group_id, e.target.checked);
-                        }}
-                        className="w-4 h-4 rounded border-zinc-600 text-cyan-500"
+                        onChange={(e) => handleToggleGroupSelected(g.group_id, e.target.checked)}
+                        className="size-3.5 rounded border-[#313642] bg-[#0a0b0e] accent-sky-500 shrink-0"
                       />
-                      <div className="truncate">
-                        <div className="text-sm font-bold truncate">{g.label}</div>
-                        <div className="text-xs text-zinc-400 font-mono">
-                          採用ファイル: #{g.selected_num}
+                      <button
+                        type="button"
+                        onClick={() => setFocusedGroupId(g.group_id)}
+                        className="text-left min-w-0 flex-1 truncate"
+                      >
+                        <div className="text-[13px] font-medium truncate">{g.label}</div>
+                        <div className="text-[11px] font-mono text-[#636b78]">
+                          #{g.selected_num}
                         </div>
-                      </div>
+                      </button>
                     </div>
                     {fit && !fit.error && (
-                      <span className="text-xs font-mono tabular-nums text-emerald-300 shrink-0">
-                        R²={fmtFixed(fit.r_squared, 4)}
+                      <span className="text-[11px] font-mono tabular-nums text-emerald-300 shrink-0">
+                        {fmtFixed(fit.r_squared, 4)}
                       </span>
                     )}
                   </div>
                 );
               })}
             </div>
-          </div>
+          </Panel>
 
-          {/* Right Large Voigt Fit Plot & Editable Parameter Table */}
-          <div className="lg:col-span-8 panel-card p-6 space-y-5">
+          <Panel className="lg:col-span-9">
             {(() => {
               const activeFit = focusedGroup.fits_by_num[String(focusedGroup.selected_num)];
               const editState = rangeEdits[focusedGroup.group_id] || {
@@ -798,179 +702,174 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
               return (
                 <>
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-4">
-                    <div>
-                      <h3 className="text-xl font-bold text-zinc-100">{focusedGroup.label}</h3>
-                      <p className="text-sm text-zinc-300 mt-0.5">{focusedGroup.description}</p>
+                  <PanelHeader
+                    title={focusedGroup.label}
+                    subtitle={focusedGroup.description}
+                    actions={
+                      <div className="flex items-center gap-1 bg-[#0a0b0e] border border-[#23262e] rounded-md p-0.5">
+                        {initialData.selected_nums.map((numOpt) => (
+                          <button
+                            key={numOpt}
+                            type="button"
+                            onClick={() => handleChangeGroupNum(focusedGroup.group_id, numOpt)}
+                            className={`h-6 px-2.5 rounded text-xs font-mono tabular-nums transition-colors ${
+                              focusedGroup.selected_num === numOpt
+                                ? 'bg-sky-500 text-zinc-950 font-semibold'
+                                : 'text-[#9ca3b0] hover:text-[#eceef2]'
+                            }`}
+                          >
+                            #{numOpt}
+                          </button>
+                        ))}
+                      </div>
+                    }
+                  />
+                  <PanelBody className="space-y-4">
+                    <div className="rounded-md bg-[#0a0b0e] border border-[#23262e] p-2">
+                      <PlotlyChart
+                        data={focusedTraces}
+                        layout={{
+                          margin: { l: 54, r: 16, t: 14, b: 40 },
+                          xaxis: { title: '2θ (deg)' },
+                          yaxis: { title: 'Intensity (a.u.)' },
+                        }}
+                        className="w-full h-[340px]"
+                        onRangeSelect={(rMin, rMax) => {
+                          setRangeEdits((prev) => ({
+                            ...prev,
+                            [focusedGroup.group_id]: {
+                              ...(prev[focusedGroup.group_id] || { centers: [] }),
+                              min: Number(rMin.toFixed(4)),
+                              max: Number(rMax.toFixed(4)),
+                            },
+                          }));
+                        }}
+                      />
                     </div>
 
-                    <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2">
-                      <span className="text-sm text-zinc-300 mr-1">初期値採用ファイル:</span>
-                      {initialData.selected_nums.map((numOpt) => (
-                        <button
-                          key={numOpt}
-                          type="button"
-                          onClick={() => handleChangeGroupNum(focusedGroup.group_id, numOpt)}
-                          className={`px-3 py-1 rounded-lg text-sm font-mono tabular-nums ${
-                            focusedGroup.selected_num === numOpt
-                              ? 'bg-cyan-500 text-zinc-950 font-bold'
-                              : 'text-zinc-300 hover:text-white'
+                    {activeFit && activeFit.peaks && (
+                      <div className="overflow-x-auto rounded-md bg-[#0a0b0e] border border-[#23262e]">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="border-b border-[#23262e] bg-[#121418] text-[#9ca3b0]">
+                              <th className="py-2 px-3 font-medium">Peak</th>
+                              <th className="py-2 px-3 font-medium">No</th>
+                              <th className="py-2 px-3 font-medium text-right">xc (2θ°)</th>
+                              <th className="py-2 px-3 font-medium text-right">面積強度 A</th>
+                              <th className="py-2 px-3 font-medium text-right">wG (°)</th>
+                              <th className="py-2 px-3 font-medium text-right">wL (°)</th>
+                              <th className="py-2 px-3 font-medium text-right">FWHM (°)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#1e2129] font-mono tabular-nums">
+                            {activeFit.peaks.map((pk, idx) => {
+                              const isGamma = pk.peak_name.startsWith('fcc');
+                              return (
+                                <tr key={pk.peak_name} className="hover:bg-[#16181d]">
+                                  <td className="py-2 px-3 font-semibold">
+                                    <span className={isGamma ? 'text-sky-300' : 'text-amber-300'}>
+                                      {pk.peak_name}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3 text-[#9ca3b0]">{pk.No}</td>
+                                  <td className="py-1.5 px-3 text-right">
+                                    <input
+                                      type="number"
+                                      step="0.005"
+                                      value={editState.centers[idx] ?? pk.xc}
+                                      onChange={(e) => {
+                                        const val = Number(e.target.value);
+                                        const nextCenters = [
+                                          ...(editState.centers || activeFit.peaks.map((p) => p.xc)),
+                                        ];
+                                        nextCenters[idx] = val;
+                                        setRangeEdits((prev) => ({
+                                          ...prev,
+                                          [focusedGroup.group_id]: {
+                                            ...editState,
+                                            centers: nextCenters,
+                                          },
+                                        }));
+                                      }}
+                                      className="w-24 h-7 bg-[#16181d] border border-[#2a2e38] rounded px-2 text-right text-xs font-mono tabular-nums text-[#eceef2] focus:border-sky-500/70 focus:outline-none"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-[#eceef2]">
+                                    {fmtFixed(pk.A, 2)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                                    {fmtFixed(pk.wG, 5)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                                    {fmtFixed(pk.wL, 5)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-semibold text-emerald-300">
+                                    {fmtFixed(pk.FWHM, 5)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium text-[#9ca3b0]">2θ 範囲</span>
+                        <UnitNumberInput
+                          step="0.05"
+                          unit="deg"
+                          value={editState.min}
+                          onChange={(e) =>
+                            setRangeEdits((prev) => ({
+                              ...prev,
+                              [focusedGroup.group_id]: {
+                                ...editState,
+                                min: Number(e.target.value),
+                              },
+                            }))
+                          }
+                          className="w-28"
+                        />
+                        <span className="text-xs text-[#636b78]">–</span>
+                        <UnitNumberInput
+                          step="0.05"
+                          unit="deg"
+                          value={editState.max}
+                          onChange={(e) =>
+                            setRangeEdits((prev) => ({
+                              ...prev,
+                              [focusedGroup.group_id]: {
+                                ...editState,
+                                max: Number(e.target.value),
+                              },
+                            }))
+                          }
+                          className="w-28"
+                        />
+                      </div>
+
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={refittingGroupId === focusedGroup.group_id}
+                        onClick={() => handleRefitGroup(focusedGroup)}
+                      >
+                        <RefreshCw
+                          className={`size-3.5 ${
+                            refittingGroupId === focusedGroup.group_id ? 'animate-spin' : ''
                           }`}
-                        >
-                          #{numOpt}
-                        </button>
-                      ))}
+                          aria-hidden="true"
+                        />
+                        <span>再フィット</span>
+                      </Button>
                     </div>
-                  </div>
-
-                  {/* Large Interactive Voigt Fit & Residual Chart */}
-                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-2">
-                    <PlotlyChart
-                      data={focusedTraces}
-                      layout={{
-                        xaxis: { title: '回折角 2θ (deg.)' },
-                        yaxis: { title: '強度 Intensity (a.u.)' },
-                      }}
-                      className="w-full h-[380px]"
-                      onRangeSelect={(rMin, rMax) => {
-                        setRangeEdits((prev) => ({
-                          ...prev,
-                          [focusedGroup.group_id]: {
-                            ...(prev[focusedGroup.group_id] || { centers: [] }),
-                            min: Number(rMin.toFixed(4)),
-                            max: Number(rMax.toFixed(4)),
-                          },
-                        }));
-                      }}
-                    />
-                  </div>
-
-                  {/* Parameter Table */}
-                  {activeFit && activeFit.peaks && (
-                    <div className="overflow-x-auto bg-zinc-950 border border-zinc-800 rounded-xl">
-                      <table className="w-full text-left border-collapse text-sm">
-                        <thead>
-                          <tr className="border-b border-zinc-800 bg-zinc-900 text-zinc-300 font-mono">
-                            <th className="py-2.5 px-4">Peak</th>
-                            <th className="py-2.5 px-3">No</th>
-                            <th className="py-2.5 px-3 text-right">初期中心角 xc (2θ°)</th>
-                            <th className="py-2.5 px-3 text-right">積分強度 A</th>
-                            <th className="py-2.5 px-3 text-right">ガウス幅 wG (°)</th>
-                            <th className="py-2.5 px-3 text-right">ローレンツ幅 wL (°)</th>
-                            <th className="py-2.5 px-4 text-right">合成半値幅 FWHM (°)</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
-                          {activeFit.peaks.map((pk, idx) => {
-                            const isGamma = pk.peak_name.startsWith('fcc');
-                            return (
-                              <tr key={pk.peak_name} className="hover:bg-zinc-900/40">
-                                <td className="py-2.5 px-4 font-bold">
-                                  <span className={isGamma ? 'text-cyan-400' : 'text-amber-400'}>
-                                    {pk.peak_name}
-                                  </span>
-                                </td>
-                                <td className="py-2.5 px-3 text-zinc-300">{pk.No}</td>
-                                <td className="py-2.5 px-3 text-right">
-                                  <input
-                                    type="number"
-                                    step="0.005"
-                                    value={editState.centers[idx] ?? pk.xc}
-                                    onChange={(e) => {
-                                      const val = Number(e.target.value);
-                                      const nextCenters = [
-                                        ...(editState.centers || activeFit.peaks.map((p) => p.xc)),
-                                      ];
-                                      nextCenters[idx] = val;
-                                      setRangeEdits((prev) => ({
-                                        ...prev,
-                                        [focusedGroup.group_id]: {
-                                          ...editState,
-                                          centers: nextCenters,
-                                        },
-                                      }));
-                                    }}
-                                    className="w-28 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1 text-right text-sm font-mono tabular-nums text-zinc-100"
-                                  />
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-200">
-                                  {fmtFixed(pk.A, 2)}
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-300">
-                                  {fmtFixed(pk.wG, 5)}
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-300">
-                                  {fmtFixed(pk.wL, 5)}
-                                </td>
-                                <td className="py-2.5 px-4 text-right font-bold text-emerald-400">
-                                  {fmtFixed(pk.FWHM, 5)}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* Range Fine-Tuning & Refit Action */}
-                  <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <Sliders className="w-4 h-4 text-cyan-400" />
-                      <span className="text-sm font-medium text-zinc-200">
-                        フィッティング範囲 2θ (deg):
-                      </span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={editState.min}
-                        onChange={(e) =>
-                          setRangeEdits((prev) => ({
-                            ...prev,
-                            [focusedGroup.group_id]: {
-                              ...editState,
-                              min: Number(e.target.value),
-                            },
-                          }))
-                        }
-                        className="w-28 input-field py-1.5 text-sm font-mono tabular-nums"
-                      />
-                      <span className="text-zinc-400">〜</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={editState.max}
-                        onChange={(e) =>
-                          setRangeEdits((prev) => ({
-                            ...prev,
-                            [focusedGroup.group_id]: {
-                              ...editState,
-                              max: Number(e.target.value),
-                            },
-                          }))
-                        }
-                        className="w-28 input-field py-1.5 text-sm font-mono tabular-nums"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={refittingGroupId === focusedGroup.group_id}
-                      onClick={() => handleRefitGroup(focusedGroup)}
-                      className="btn-primary"
-                    >
-                      <RefreshCw
-                        className={`w-4 h-4 ${
-                          refittingGroupId === focusedGroup.group_id ? 'animate-spin' : ''
-                        }`}
-                      />
-                      <span>微調整した範囲・中心角で再フィット</span>
-                    </button>
-                  </div>
+                  </PanelBody>
                 </>
               );
             })()}
-          </div>
+          </Panel>
         </div>
       )}
     </div>

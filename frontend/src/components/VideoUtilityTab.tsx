@@ -1,18 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Film,
   FolderOpen,
   Play,
-  CheckCircle2,
-  AlertCircle,
   RefreshCw,
-  Clock,
-  Layers,
-  Image as ImageIcon,
-  Sparkles,
   FileVideo,
 } from 'lucide-react';
-import { TutorialGuideBanner } from './TutorialGuideBanner';
+import { Button } from './ui/Button';
+import { Panel, PanelBody, PanelHeader } from './ui/Panel';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { MetricCell, MetricStrip } from './ui/MetricStrip';
+import { FieldLabel, SelectInput, TextInput, UnitNumberInput } from './ui/Field';
+import { StatusBadge } from './ui/StatusBadge';
+import { Notice } from './ui/Notice';
 import { apiGet, apiPost, fmtFixed, runVideoExportStream } from '../lib/utils';
 import type { VideoInspectResponse } from '../types/xrd';
 
@@ -97,7 +96,7 @@ export const VideoUtilityTab: React.FC = () => {
         setLoadingInspect(false);
       }
     },
-    [targetPath, mode, startSec, stopSec, stepSec, outputDir]
+    [targetPath, mode, startSec, stopSec, stepSec]
   );
 
   useEffect(() => {
@@ -173,7 +172,7 @@ export const VideoUtilityTab: React.FC = () => {
     setErrorMsg(null);
     setExportResult(null);
     setProgressPct(0);
-    setProgressDetail('動画ストリームを初期化中...');
+    setProgressDetail('初期化中...');
 
     const payload = {
       mode,
@@ -188,19 +187,19 @@ export const VideoUtilityTab: React.FC = () => {
 
     try {
       await runVideoExportStream(payload, (rawMsg) => {
-        const msg = rawMsg as Record<string, any>;
+        const msg = rawMsg as Record<string, unknown>;
         if (msg.type === 'progress') {
-          setProgressPct(msg.progress_pct ?? 0);
-          setCurrentCount(msg.current ?? 0);
-          setTotalCount(msg.total ?? 0);
+          setProgressPct(Number(msg.progress_pct ?? 0));
+          setCurrentCount(Number(msg.current ?? 0));
+          setTotalCount(Number(msg.total ?? 0));
           setProgressDetail(
-            `${msg.video_name || ''} — ${msg.current}/${msg.total} フレーム完了`
+            `${msg.video_name || ''} — ${msg.current}/${msg.total}`
           );
         } else if (msg.type === 'complete') {
           setProgressPct(100);
-          setExportResult(msg as ExportCompleteSummary);
+          setExportResult(msg as unknown as ExportCompleteSummary);
         } else if (msg.type === 'error') {
-          setErrorMsg(msg.detail || '動画切り出し中にエラーが発生しました');
+          setErrorMsg(String(msg.detail || '動画切り出し中にエラーが発生しました'));
         }
       });
     } catch (err: unknown) {
@@ -211,442 +210,329 @@ export const VideoUtilityTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <TutorialGuideBanner
-        mode="dic"
-        stepTitle="DIC（デジタル画像相関法）用 動画フレーム高速一括切り出しガイド"
-        summary="引張試験等で撮影した動画ファイル（.mp4 / .MP4 / .mov / .avi）から、指定した秒数範囲・時間間隔で静止画フレームを連番画像として高速出力します。日本語を含むフォルダパスでも文字化けやエラーなく保存できます。"
-        steps={[
-          {
-            badge: 'STEP 1',
-            title: '処理モードと動画を選択',
-            description: '1本の動画なら「単一動画ファイル指定」、フォルダ内の全動画をまとめて処理するなら「フォルダ内全動画一括処理」を選び、「参照」ボタンで選択します。',
-          },
-          {
-            badge: 'STEP 2',
-            title: '開始秒数・終了秒数・切り出し間隔を設定',
-            description: '例えば 1.0秒おきにフレームを抽出する場合は「step_sec = 1.0」に設定します。右側のカードに出力予定枚数が自動計算されます。',
-          },
-          {
-            badge: 'STEP 3',
-            title: '「フレーム画像の一括切り出しを実行」をクリック',
-            description: '進捗バーが100%になると、動画と同じ階層（または指定フォルダ）に連番画像ファイルが出力されます。',
-          },
-        ]}
-        glossary={[
-          {
-            term: 'DIC (Digital Image Correlation / デジタル画像相関法)',
-            meaning:
-              '試験片表面のランダムなスペックル模様を連続撮影した画像群から、局所ひずみ分布やリュダース帯の伝播を非接触で計測する手法です。',
-          },
-          {
-            term: 'JPEG (.jpg) と PNG (.png ロスレス) の違い',
-            meaning:
-              'ファイル容量を抑えたい場合はJPEG、圧縮ノイズを完全に排除して最高精度のひずみ解析を行いたい場合はPNG（ロスレス）を選択してください。',
-          },
-        ]}
-      />
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+      {/* Left Extraction Controls */}
+      <Panel className="lg:col-span-5">
+        <PanelHeader title="DIC フレーム抽出" />
+        <PanelBody className="space-y-4">
+          <div>
+            <FieldLabel>入力モード</FieldLabel>
+            <SegmentedControl
+              fullWidth
+              ariaLabel="入力モード"
+              value={mode}
+              onChange={handleSelectMode}
+              options={[
+                {
+                  value: 'single',
+                  label: '単一動画',
+                  icon: <FileVideo className="size-3.5" aria-hidden="true" />,
+                  accent: 'amber',
+                },
+                {
+                  value: 'folder',
+                  label: 'フォルダ一括',
+                  icon: <FolderOpen className="size-3.5" aria-hidden="true" />,
+                  accent: 'amber',
+                },
+              ]}
+            />
+          </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Mode & Parameters */}
-        <div className="lg:col-span-5 space-y-5">
-          <div className="panel-card p-6 space-y-5">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400">
-                  <Film className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-base sm:text-lg font-bold text-zinc-100">
-                    DIC用 動画フレーム切り出し設定
-                  </h2>
-                  <p className="text-sm text-zinc-400">
-                    単一動画 / フォルダ一括対応・日本語パス完全対応 (`cv2.imencode`)
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Mode Toggle */}
-            <div data-tour="dic-mode-select">
-              <label className="label-xs block mb-2">STEP 1: 処理モード選択</label>
-              <div className="grid grid-cols-2 gap-2.5 p-1.5 bg-zinc-950 rounded-xl border border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => handleSelectMode('single')}
-                  className={`py-2.5 px-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${
-                    mode === 'single'
-                      ? 'bg-cyan-500 text-zinc-950 shadow'
-                      : 'text-zinc-300 hover:text-zinc-100'
-                  }`}
-                >
-                  <FileVideo className="w-4 h-4" />
-                  単一動画ファイル指定
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectMode('folder')}
-                  className={`py-2.5 px-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${
-                    mode === 'folder'
-                      ? 'bg-amber-500 text-zinc-950 shadow'
-                      : 'text-zinc-300 hover:text-zinc-100'
-                  }`}
-                >
-                  <FolderOpen className="w-4 h-4" />
-                  フォルダ内全動画一括処理
-                </button>
-              </div>
-            </div>
-
-            {/* Target Path Input */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label htmlFor="dic-target-path" className="label-xs">
-                  {mode === 'single' ? '対象動画ファイルパス' : '対象動画フォルダパス'}
-                </label>
-                {samplePaths && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const p =
-                        mode === 'single'
-                          ? samplePaths.sample_dic_video
-                          : samplePaths.sample_dic_folder;
-                      setTargetPath(p);
-                      handleInspect(p, mode, true);
-                    }}
-                    className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    サンプル動画をセット
-                  </button>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  id="dic-target-path"
-                  type="text"
-                  value={targetPath}
-                  onChange={(e) => setTargetPath(e.target.value)}
-                  placeholder={
-                    mode === 'single'
-                      ? 'C:\\path\\to\\video.mp4'
-                      : 'C:\\path\\to\\video_folder'
-                  }
-                  className="input-field font-mono text-sm flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={handleBrowseTarget}
-                  className="btn-secondary shrink-0"
-                  title="OSネイティブ選択ダイアログを開く"
-                >
-                  <FolderOpen className="w-4 h-4 text-amber-400" />
-                  参照
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleInspect(targetPath, mode, false)}
-                  disabled={loadingInspect || !targetPath.trim()}
-                  className="btn-secondary shrink-0"
-                  title="メタデータ再取得"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loadingInspect ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-            </div>
-
-            {/* Extraction Timing Parameters */}
-            <div data-tour="dic-timing-params" className="grid grid-cols-3 gap-3 pt-1">
-              <div>
-                <label htmlFor="dic-start-sec" className="label-xs block mb-1.5">
-                  開始秒数 `start_sec` (s)
-                </label>
-                <input
-                  id="dic-start-sec"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={startSec}
-                  onChange={(e) => setStartSec(Math.max(0, parseFloat(e.target.value) || 0))}
-                  onBlur={() => handleInspect(targetPath, mode, false)}
-                  className="input-field font-mono tabular-nums text-sm"
-                />
-              </div>
-              <div>
-                <label htmlFor="dic-stop-sec" className="label-xs block mb-1.5">
-                  終了秒数 `stop_sec` (s)
-                </label>
-                <input
-                  id="dic-stop-sec"
-                  type="number"
-                  step="0.5"
-                  min="0.1"
-                  value={stopSec}
-                  onChange={(e) => setStopSec(Math.max(0.1, parseFloat(e.target.value) || 1.0))}
-                  onBlur={() => handleInspect(targetPath, mode, false)}
-                  className="input-field font-mono tabular-nums text-sm"
-                />
-              </div>
-              <div>
-                <label htmlFor="dic-step-sec" className="label-xs block mb-1.5">
-                  切り出し間隔 `step_sec` (s)
-                </label>
-                <input
-                  id="dic-step-sec"
-                  type="number"
-                  step="0.1"
-                  min="0.02"
-                  value={stepSec}
-                  onChange={(e) => setStepSec(Math.max(0.02, parseFloat(e.target.value) || 1.0))}
-                  onBlur={() => handleInspect(targetPath, mode, false)}
-                  className="input-field font-mono tabular-nums text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Output Format & Destination */}
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label htmlFor="dic-ext" className="label-xs block mb-1.5">
-                  出力画像形式
-                </label>
-                <select
-                  id="dic-ext"
-                  value={ext}
-                  onChange={(e) => setExt(e.target.value as 'jpg' | 'png')}
-                  className="input-field font-mono text-sm"
-                >
-                  <option value="jpg">JPEG (.jpg)</option>
-                  <option value="png">PNG (.png ロスレス)</option>
-                </select>
-              </div>
-              <div className="col-span-2">
-                <label htmlFor="dic-basename" className="label-xs block mb-1.5">
-                  {mode === 'single' ? '出力ファイル名プレフィックス' : 'フォルダ一括時サフィックス'}
-                </label>
-                <input
-                  id="dic-basename"
-                  type="text"
-                  value={basename}
-                  onChange={(e) => setBasename(e.target.value)}
-                  placeholder={mode === 'single' ? 'video_img' : '_img'}
-                  className="input-field font-mono text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label htmlFor="dic-output-dir" className="label-xs block">
-                出力先ディレクトリ（空欄時は動画と同階層に自動作成）
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label htmlFor="dic-target-path" className="text-xs font-medium text-[#9ca3b0]">
+                {mode === 'single' ? '動画ファイル' : '動画フォルダ'}
               </label>
-              <div className="flex gap-2">
-                <input
-                  id="dic-output-dir"
-                  type="text"
-                  value={outputDir}
-                  onChange={(e) => setOutputDir(e.target.value)}
-                  placeholder="自動設定"
-                  className="input-field font-mono text-sm flex-1"
-                />
+              {samplePaths && (
                 <button
                   type="button"
-                  onClick={handleBrowseOutputDir}
-                  className="btn-secondary shrink-0"
+                  onClick={() => {
+                    const p =
+                      mode === 'single'
+                        ? samplePaths.sample_dic_video
+                        : samplePaths.sample_dic_folder;
+                    setTargetPath(p);
+                    handleInspect(p, mode, true);
+                  }}
+                  className="text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors"
                 >
-                  <FolderOpen className="w-4 h-4" />
+                  サンプル読込
                 </button>
-              </div>
-            </div>
-
-            {/* Action Button */}
-            <button
-              type="button"
-              data-tour="dic-run-btn"
-              onClick={handleRunExport}
-              disabled={runningExport || !targetPath.trim()}
-              className="btn-amber w-full py-3.5 text-base flex items-center justify-center gap-2.5"
-            >
-              {runningExport ? (
-                <>
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  フレーム切り出し実行中... ({fmtFixed(progressPct, 1)}%)
-                </>
-              ) : (
-                <>
-                  <Play className="w-5 h-5 fill-current" />
-                  フレーム画像の一括切り出しを実行
-                </>
               )}
-            </button>
+            </div>
+            <div className="flex gap-1.5">
+              <TextInput
+                id="dic-target-path"
+                mono
+                value={targetPath}
+                onChange={(e) => setTargetPath(e.target.value)}
+                placeholder={
+                  mode === 'single'
+                    ? 'C:\\path\\to\\video.mp4'
+                    : 'C:\\path\\to\\video_folder'
+                }
+                className="flex-1"
+              />
+              <Button variant="secondary" size="sm" onClick={handleBrowseTarget}>
+                <FolderOpen className="size-3.5 text-amber-400" aria-hidden="true" />
+                <span>参照</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleInspect(targetPath, mode, false)}
+                disabled={loadingInspect || !targetPath.trim()}
+                aria-label="メタデータ再取得"
+                className="px-2"
+              >
+                <RefreshCw
+                  className={`size-3.5 ${loadingInspect ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+              </Button>
+            </div>
+          </div>
 
-            {errorMsg && (
-              <div className="p-4 rounded-xl bg-red-950/50 border border-red-500/40 text-sm text-red-200 flex items-start gap-2.5">
-                <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                <span>{errorMsg}</span>
-              </div>
+          <div className="grid grid-cols-3 gap-2.5">
+            <div>
+              <FieldLabel htmlFor="dic-start-sec">開始</FieldLabel>
+              <UnitNumberInput
+                id="dic-start-sec"
+                step="0.1"
+                min="0"
+                unit="s"
+                value={startSec}
+                onChange={(e) => setStartSec(Math.max(0, parseFloat(e.target.value) || 0))}
+                onBlur={() => handleInspect(targetPath, mode, false)}
+              />
+            </div>
+            <div>
+              <FieldLabel htmlFor="dic-stop-sec">終了</FieldLabel>
+              <UnitNumberInput
+                id="dic-stop-sec"
+                step="0.5"
+                min="0.1"
+                unit="s"
+                value={stopSec}
+                onChange={(e) => setStopSec(Math.max(0.1, parseFloat(e.target.value) || 1.0))}
+                onBlur={() => handleInspect(targetPath, mode, false)}
+              />
+            </div>
+            <div>
+              <FieldLabel htmlFor="dic-step-sec">間隔</FieldLabel>
+              <UnitNumberInput
+                id="dic-step-sec"
+                step="0.1"
+                min="0.02"
+                unit="s"
+                value={stepSec}
+                onChange={(e) => setStepSec(Math.max(0.02, parseFloat(e.target.value) || 1.0))}
+                onBlur={() => handleInspect(targetPath, mode, false)}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2.5">
+            <div>
+              <FieldLabel htmlFor="dic-ext">画像形式</FieldLabel>
+              <SelectInput
+                id="dic-ext"
+                mono
+                value={ext}
+                onChange={(e) => setExt(e.target.value as 'jpg' | 'png')}
+              >
+                <option value="jpg">JPEG</option>
+                <option value="png">PNG</option>
+              </SelectInput>
+            </div>
+            <div className="col-span-2">
+              <FieldLabel htmlFor="dic-basename">
+                {mode === 'single' ? 'ファイル接頭辞' : 'サフィックス'}
+              </FieldLabel>
+              <TextInput
+                id="dic-basename"
+                mono
+                value={basename}
+                onChange={(e) => setBasename(e.target.value)}
+                placeholder={mode === 'single' ? 'video_img' : '_img'}
+              />
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel htmlFor="dic-output-dir" hint="空欄で自動">
+              出力先フォルダ
+            </FieldLabel>
+            <div className="flex gap-1.5">
+              <TextInput
+                id="dic-output-dir"
+                mono
+                value={outputDir}
+                onChange={(e) => setOutputDir(e.target.value)}
+                placeholder="動画と同階層"
+                className="flex-1"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleBrowseOutputDir}
+                aria-label="出力先を選択"
+                className="px-2.5"
+              >
+                <FolderOpen className="size-3.5" aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+
+          <Button
+            variant="amber"
+            block
+            onClick={handleRunExport}
+            disabled={runningExport || !targetPath.trim()}
+          >
+            {runningExport ? (
+              <>
+                <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+                <span className="tabular-nums">抽出中... {fmtFixed(progressPct, 1)}%</span>
+              </>
+            ) : (
+              <>
+                <Play className="size-3.5 fill-current" aria-hidden="true" />
+                <span>フレーム抽出を実行</span>
+              </>
             )}
-          </div>
-        </div>
+          </Button>
 
-        {/* Right Column: Video Metadata & Real-Time Extraction Monitor */}
-        <div className="lg:col-span-7 space-y-5">
-          {/* Summary KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-            <div className="panel-card p-4">
-              <div className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
-                <Film className="w-4 h-4 text-cyan-400" />
-                認識動画ファイル数
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-zinc-100">
-                {inspectData ? inspectData.video_count : 0}{' '}
-                <span className="text-xs font-normal text-zinc-400">files</span>
-              </div>
-            </div>
+          {errorMsg && <Notice tone="error">{errorMsg}</Notice>}
+        </PanelBody>
+      </Panel>
 
-            <div className="panel-card p-4">
-              <div className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-amber-400" />
-                総再生時間
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-zinc-100">
-                {inspectData ? fmtFixed(inspectData.total_duration_sec, 2) : '0.00'}{' '}
-                <span className="text-xs font-normal text-zinc-400">sec</span>
-              </div>
-            </div>
+      {/* Right Telemetry, Table & Progress */}
+      <div className="lg:col-span-7 space-y-4">
+        <MetricStrip columns={4}>
+          <MetricCell
+            label="認識動画"
+            value={inspectData ? inspectData.video_count : 0}
+            unit="files"
+          />
+          <MetricCell
+            label="総再生時間"
+            value={inspectData ? fmtFixed(inspectData.total_duration_sec, 2) : '0.00'}
+            unit="s"
+          />
+          <MetricCell
+            label="フレームレート"
+            value={
+              inspectData && inspectData.videos[0]
+                ? fmtFixed(inspectData.videos[0].fps, 2)
+                : '0.00'
+            }
+            unit="fps"
+          />
+          <MetricCell
+            label="出力予定"
+            value={inspectData ? inspectData.expected_total_frames : 0}
+            unit="frames"
+            tone="amber"
+          />
+        </MetricStrip>
 
-            <div className="panel-card p-4">
-              <div className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
-                <Layers className="w-4 h-4 text-emerald-400" />
-                フレームレート (代表)
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-zinc-100">
-                {inspectData && inspectData.videos[0]
-                  ? fmtFixed(inspectData.videos[0].fps, 2)
-                  : '0.00'}{' '}
-                <span className="text-xs font-normal text-zinc-400">fps</span>
-              </div>
-            </div>
-
-            <div className="panel-card p-4 border-cyan-500/40">
-              <div className="text-xs font-medium text-cyan-300 flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4 text-cyan-400" />
-                出力予定枚数 (合計)
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-cyan-300">
-                {inspectData ? inspectData.expected_total_frames : 0}{' '}
-                <span className="text-xs font-normal text-cyan-400/80">frames</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Metadata Table */}
-          <div className="panel-card p-5 space-y-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-bold text-zinc-200">
-                検出された動画メタデータ一覧（大文字 `.MP4` / 小文字 `.mp4` / `.mov` / `.avi` 自動認識）
-              </h3>
-              <span className="text-sm font-mono tabular-nums text-zinc-300">
-                間隔 {fmtFixed(stepSec, 2)}s ({fmtFixed(startSec, 1)}s – {fmtFixed(stopSec, 1)}s)
-              </span>
-            </div>
-
-            <div className="overflow-x-auto max-h-64 border border-zinc-800 rounded-xl">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="bg-zinc-900/90 border-b border-zinc-800 text-zinc-300">
-                    <th className="py-2.5 px-3.5 font-semibold">ファイル名</th>
-                    <th className="py-2.5 px-3.5 font-semibold">拡張子</th>
-                    <th className="py-2.5 px-3.5 font-semibold text-right">解像度</th>
-                    <th className="py-2.5 px-3.5 font-semibold text-right">FPS</th>
-                    <th className="py-2.5 px-3.5 font-semibold text-right">総フレーム数</th>
-                    <th className="py-2.5 px-3.5 font-semibold text-right">再生時間 (s)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
-                  {inspectData && inspectData.videos.length > 0 ? (
-                    inspectData.videos.map((v) => (
-                      <tr key={v.video_path} className="hover:bg-zinc-800/40">
-                        <td className="py-2.5 px-3.5 text-zinc-100 font-sans font-medium">
-                          {v.filename}
-                        </td>
-                        <td className="py-2.5 px-3.5">
-                          <span className="px-2 py-0.5 rounded bg-zinc-800 text-cyan-300 text-xs">
-                            {v.extension}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3.5 text-right text-zinc-200">
-                          {v.width}×{v.height}
-                        </td>
-                        <td className="py-2.5 px-3.5 text-right text-zinc-200">
-                          {fmtFixed(v.fps, 2)}
-                        </td>
-                        <td className="py-2.5 px-3.5 text-right text-zinc-200">{v.frame_count}</td>
-                        <td className="py-2.5 px-3.5 text-right text-amber-300 font-bold">
-                          {fmtFixed(v.duration_sec, 2)}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-10 text-center text-zinc-400 font-sans">
-                        動画ファイルまたはフォルダを選択するとメタデータが表示されます
+        <Panel>
+          <PanelHeader
+            title="動画メタデータ"
+            subtitle={`間隔 ${fmtFixed(stepSec, 2)}s (${fmtFixed(startSec, 1)}–${fmtFixed(stopSec, 1)}s)`}
+          />
+          <div className="overflow-x-auto max-h-64">
+            <table className="w-full text-left border-collapse text-[13px]">
+              <thead>
+                <tr className="bg-[#121418] border-b border-[#23262e] text-xs text-[#9ca3b0]">
+                  <th className="py-2 px-3 font-medium">ファイル名</th>
+                  <th className="py-2 px-3 font-medium">形式</th>
+                  <th className="py-2 px-3 font-medium text-right">解像度</th>
+                  <th className="py-2 px-3 font-medium text-right">FPS</th>
+                  <th className="py-2 px-3 font-medium text-right">フレーム</th>
+                  <th className="py-2 px-3 font-medium text-right">時間</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1e2129] font-mono tabular-nums text-xs">
+                {inspectData && inspectData.videos.length > 0 ? (
+                  inspectData.videos.map((v) => (
+                    <tr key={v.video_path} className="hover:bg-[#1c1f26]">
+                      <td className="py-2 px-3 text-[#eceef2] font-sans font-medium">
+                        {v.filename}
+                      </td>
+                      <td className="py-2 px-3">
+                        <StatusBadge tone="sky" mono>
+                          {v.extension}
+                        </StatusBadge>
+                      </td>
+                      <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                        {v.width}×{v.height}
+                      </td>
+                      <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                        {fmtFixed(v.fps, 2)}
+                      </td>
+                      <td className="py-2 px-3 text-right text-[#eceef2]">{v.frame_count}</td>
+                      <td className="py-2 px-3 text-right text-amber-300 font-semibold">
+                        {fmtFixed(v.duration_sec, 2)} s
                       </td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-[#636b78] font-sans">
+                      動画を選択するとメタデータが表示されます
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
+        </Panel>
 
-          {/* Live Progress & Completion Status */}
-          <div className="panel-card p-5 space-y-3.5">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-zinc-200">
-                切り出し進捗モニター
+        <Panel>
+          <PanelHeader
+            title="抽出進捗"
+            actions={
+              <span className="text-xs font-mono tabular-nums text-amber-300 font-semibold">
+                {fmtFixed(progressPct, 1)}% ({currentCount}/
+                {totalCount || (inspectData?.expected_total_frames ?? 0)})
               </span>
-              <span className="text-sm font-mono tabular-nums text-cyan-400 font-bold">
-                {fmtFixed(progressPct, 1)}% ({currentCount}/{totalCount || (inspectData?.expected_total_frames ?? 0)})
-              </span>
-            </div>
-
-            <div className="w-full h-3 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
+            }
+          />
+          <PanelBody className="space-y-3">
+            <div className="w-full h-1.5 bg-[#0a0b0e] rounded-full overflow-hidden border border-[#23262e]">
               <div
-                className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 transition-all duration-150"
-                style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }}
+                className="h-full bg-amber-400 origin-left transition-transform duration-150 ease-out"
+                style={{
+                  transform: `scaleX(${Math.min(1, Math.max(0, progressPct / 100))})`,
+                }}
               />
             </div>
 
             {progressDetail && (
-              <p className="text-sm font-mono tabular-nums text-zinc-300 truncate">
+              <div className="text-xs font-mono tabular-nums text-[#9ca3b0] truncate">
                 {progressDetail}
-              </p>
+              </div>
             )}
 
             {exportResult && (
-              <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/40 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-300 text-sm font-bold">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <span>
-                    DICフレーム画像の一括出力が完了しました（合計{' '}
-                    <strong className="font-mono tabular-nums">
-                      {exportResult.saved_count ?? exportResult.total_saved_frames ?? 0}
-                    </strong>{' '}
-                    枚保存）
-                  </span>
+              <Notice tone="success">
+                <div className="font-medium">
+                  出力完了 —{' '}
+                  <span className="font-mono tabular-nums">
+                    {exportResult.saved_count ?? exportResult.total_saved_frames ?? 0}
+                  </span>{' '}
+                  枚保存
                 </div>
-                <div className="text-sm font-mono text-zinc-200 break-all">
-                  出力先: {exportResult.output_dir || exportResult.output_root_dir}
+                <div className="text-xs font-mono text-emerald-300/80 break-all mt-0.5">
+                  {exportResult.output_dir || exportResult.output_root_dir}
                 </div>
-                {exportResult.sample_files && exportResult.sample_files.length > 0 && (
-                  <div className="text-xs font-mono text-zinc-400">
-                    先頭ファイル例: {exportResult.sample_files[0]}
-                  </div>
-                )}
-              </div>
+              </Notice>
             )}
-          </div>
-        </div>
+          </PanelBody>
+        </Panel>
       </div>
     </div>
   );

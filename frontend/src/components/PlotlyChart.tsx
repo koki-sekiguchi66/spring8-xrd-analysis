@@ -13,32 +13,32 @@ export interface PlotlyChartProps {
 
 const BASE_DARK_LAYOUT: Record<string, unknown> = {
   paper_bgcolor: 'rgba(0,0,0,0)',
-  plot_bgcolor: '#09090b',
+  plot_bgcolor: '#0a0b0e',
   font: {
-    family: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
-    color: '#e4e4e7',
-    size: 13,
+    family: '"Segoe UI", "Yu Gothic UI", system-ui, sans-serif',
+    color: '#d4d8e0',
+    size: 12,
   },
-  margin: { l: 64, r: 24, t: 38, b: 48 },
+  margin: { l: 58, r: 18, t: 24, b: 44 },
   xaxis: {
-    gridcolor: '#1f1f23',
-    zerolinecolor: '#27272a',
-    linecolor: '#27272a',
-    tickfont: { size: 12, color: '#d4d4d8' },
-    titlefont: { size: 14, color: '#f4f4f5' },
+    gridcolor: '#181b22',
+    zerolinecolor: '#23262e',
+    linecolor: '#23262e',
+    tickfont: { family: '"Cascadia Mono", "JetBrains Mono", monospace', size: 11, color: '#9ca3b0' },
+    titlefont: { size: 12, color: '#d4d8e0' },
   },
   yaxis: {
-    gridcolor: '#1f1f23',
-    zerolinecolor: '#27272a',
-    linecolor: '#27272a',
-    tickfont: { size: 12, color: '#d4d4d8' },
-    titlefont: { size: 14, color: '#f4f4f5' },
+    gridcolor: '#181b22',
+    zerolinecolor: '#23262e',
+    linecolor: '#23262e',
+    tickfont: { family: '"Cascadia Mono", "JetBrains Mono", monospace', size: 11, color: '#9ca3b0' },
+    titlefont: { size: 12, color: '#d4d8e0' },
   },
   legend: {
-    bgcolor: 'rgba(18, 18, 22, 0.90)',
-    bordercolor: '#27272a',
+    bgcolor: 'rgba(16, 18, 22, 0.88)',
+    bordercolor: '#23262e',
     borderwidth: 1,
-    font: { size: 12, color: '#f4f4f5' },
+    font: { size: 11, color: '#d4d8e0' },
   },
   hovermode: 'closest',
 };
@@ -71,7 +71,9 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = React.memo(
 
       Plotly.react(el, data, mergedLayout, mergedConfig);
 
-      const handlePlotlyClick = (ev: { points?: Array<{ x: number; y: number; curveNumber: number; pointIndex: number }> }) => {
+      const handlePlotlyClick = (ev: {
+        points?: Array<{ x: number; y: number; curveNumber: number; pointIndex: number }>;
+      }) => {
         if (clickRef.current && ev.points && ev.points.length > 0) {
           const pt = ev.points[0];
           clickRef.current({
@@ -93,7 +95,6 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = React.memo(
         }
       };
 
-      // Attach listeners cleanly
       const anyEl = el as unknown as {
         on: (event: string, cb: (...args: never[]) => void) => void;
         removeAllListeners?: (event: string) => void;

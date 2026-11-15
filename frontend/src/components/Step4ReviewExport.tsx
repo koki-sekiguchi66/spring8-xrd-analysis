@@ -1,30 +1,32 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  FileSpreadsheet,
-  CheckCircle2,
   AlertTriangle,
-  RefreshCw,
-  Wrench,
-  CheckSquare,
-  Square,
-  Sparkles,
   ArrowRight,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   Layers,
-  TrendingUp,
-  Plus,
+  Play,
+  RotateCcw,
+  SlidersHorizontal,
 } from 'lucide-react';
-import { PlotlyChart } from './PlotlyChart';
-import { TutorialGuideBanner } from './TutorialGuideBanner';
-import { apiGet, apiPost, fmtFixed } from '../lib/utils';
-import type {
+import {
   BatchGroupResult,
   BatchRefitResponse,
   CandidateFitResult,
 } from '../types/xrd';
+import { apiGet, apiPost, cn, fmtFixed, fmtSci } from '../lib/utils';
+import { PlotlyChart } from './PlotlyChart';
+import { Button } from './ui/Button';
+import { CheckboxRow, FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
+import { Notice } from './ui/Notice';
+import { Panel, PanelBody, PanelHeader } from './ui/Panel';
+import { PlotFrame } from './ui/PlotFrame';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { StatusBadge } from './ui/StatusBadge';
 
-export interface Step4ReviewExportProps {
+interface Step4ReviewExportProps {
   folderPath: string;
   specimenName: string;
   batchResults: Record<string, BatchGroupResult>;
@@ -32,7 +34,16 @@ export interface Step4ReviewExportProps {
   onProceedStep5: () => void;
 }
 
-interface InspectedWaveform {
+type SubView = 'outlier_studio' | 'trend_and_export';
+
+interface PeakEditValues {
+  center: number;
+  wG: number;
+  wL: number;
+  amplitude: number;
+}
+
+interface WaveformInspection {
   num: number;
   filename: string;
   residual_rmse: number;
@@ -47,19 +58,7 @@ interface InspectedWaveform {
   };
 }
 
-export interface OutlierQueueItem {
-  key: string; // `${group_id}::${num}`
-  group_id: string;
-  sheet_name: string;
-  peaks: string[];
-  phaseLabel: string;
-  hasGamma: boolean;
-  hasAlpha: boolean;
-  num: number;
-  isFlaggedOutlier: boolean;
-}
-
-type Step4SubScreen = 'outlier_studio' | 'trend_and_export';
+const PEAK_COLORS = ['#38bdf8', '#f59e0b', '#34d399', '#a78bfa', '#f472b6', '#fb7185'];
 
 export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
   folderPath,
@@ -68,332 +67,244 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
   setBatchResults,
   onProceedStep5,
 }) => {
-  const groupIds = useMemo(() => Object.keys(batchResults), [batchResults]);
-  const [subScreen, setSubScreen] = useState<Step4SubScreen>('outlier_studio');
+  const groupList = useMemo(() => Object.values(batchResults), [batchResults]);
 
-  // --- All Outlier Items across ALL Phases & Peak Groups ---
-  const [customAddedItems, setCustomAddedItems] = useState<OutlierQueueItem[]>([]);
-  const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
-  const [activeQueueIndex, setActiveQueueIndex] = useState<number>(0);
-
-  // Add arbitrary (group_id, num) to queue
-  const [manualGroupId, setManualGroupId] = useState<string>(groupIds[0] || '');
-  const [manualNumInput, setManualNumInput] = useState<string>('');
+  const [activeSubView, setActiveSubView] = useState<SubView>('outlier_studio');
+  const [selectedGid, setSelectedGid] = useState<string>(groupList[0]?.group_id ?? '');
 
   useEffect(() => {
-    if (groupIds.length > 0 && (!manualGroupId || !batchResults[manualGroupId])) {
-      setManualGroupId(groupIds[0]);
+    if (!groupList.length) {
+      setSelectedGid('');
+      return;
     }
-  }, [groupIds, manualGroupId, batchResults]);
-
-  const allQueueCandidates = useMemo<OutlierQueueItem[]>(() => {
-    const list: OutlierQueueItem[] = [];
-    const seen = new Set<string>();
-
-    for (const gid of groupIds) {
-      const grp = batchResults[gid];
-      if (!grp) continue;
-      const hasGamma = grp.peaks.some((p) => p.toLowerCase().startsWith('fcc'));
-      const hasAlpha = grp.peaks.some((p) => p.toLowerCase().startsWith('bcc'));
-      const phaseLabel =
-        hasGamma && hasAlpha
-          ? "γ-FCC + α'-BCC 重畳"
-          : hasGamma
-          ? 'γ-FCC (オーステナイト)'
-          : "α'-BCC (マルテンサイト)";
-
-      for (const num of grp.outlier_nums || []) {
-        const key = `${gid}::${num}`;
-        seen.add(key);
-        list.push({
-          key,
-          group_id: gid,
-          sheet_name: grp.sheet_name,
-          peaks: grp.peaks,
-          phaseLabel,
-          hasGamma,
-          hasAlpha,
-          num,
-          isFlaggedOutlier: true,
-        });
-      }
+    if (!selectedGid || !batchResults[selectedGid]) {
+      setSelectedGid(groupList[0].group_id);
     }
+  }, [groupList, selectedGid, batchResults]);
 
-    for (const item of customAddedItems) {
-      if (!seen.has(item.key) && batchResults[item.group_id]) {
-        seen.add(item.key);
-        list.push(item);
-      }
-    }
+  const activeGroup = selectedGid ? batchResults[selectedGid] : undefined;
 
-    return list;
-  }, [groupIds, batchResults, customAddedItems]);
+  const [selectedNums, setSelectedNums] = useState<number[]>([]);
+  const [manualInput, setManualInput] = useState('');
+  const [useNeighborInterpolation, setUseNeighborInterpolation] = useState(true);
+  const [varyY0, setVaryY0] = useState(true);
 
-  // Auto-select all flagged outliers on initial load
-  useEffect(() => {
-    if (allQueueCandidates.length > 0 && Object.keys(selectedKeys).length === 0) {
-      const nextSel: Record<string, boolean> = {};
-      for (const item of allQueueCandidates) {
-        nextSel[item.key] = true;
-      }
-      setSelectedKeys(nextSel);
-    }
-  }, [allQueueCandidates.length]);
+  const [inspectNum, setInspectNum] = useState<number | null>(null);
+  const [waveform, setWaveform] = useState<WaveformInspection | null>(null);
+  const [loadingWaveform, setLoadingWaveform] = useState(false);
 
-  const checkedQueueItems = useMemo(
-    () => allQueueCandidates.filter((it) => selectedKeys[it.key]),
-    [allQueueCandidates, selectedKeys]
-  );
+  const [rangeMin, setRangeMin] = useState<number>(0);
+  const [rangeMax, setRangeMax] = useState<number>(0);
+  const [peakParams, setPeakParams] = useState<Record<string, PeakEditValues>>({});
 
-  const activeQueueItem: OutlierQueueItem | null = useMemo(() => {
-    if (checkedQueueItems.length > 0) {
-      const safeIdx = Math.min(Math.max(0, activeQueueIndex), checkedQueueItems.length - 1);
-      return checkedQueueItems[safeIdx];
-    }
-    return allQueueCandidates[0] || null;
-  }, [checkedQueueItems, activeQueueIndex, allQueueCandidates]);
+  const [isRefittingSingle, setIsRefittingSingle] = useState(false);
+  const [isRefittingBatch, setIsRefittingBatch] = useState(false);
+  const [batchSummary, setBatchSummary] = useState<BatchRefitResponse | null>(null);
 
-  // --- Trend & Inspection State ---
-  const [activeTrendGroupId, setActiveTrendGroupId] = useState<string>(groupIds[0] || '');
-  useEffect(() => {
-    if (groupIds.length > 0 && (!activeTrendGroupId || !batchResults[activeTrendGroupId])) {
-      setActiveTrendGroupId(groupIds[0]);
-    }
-  }, [groupIds, activeTrendGroupId, batchResults]);
-
-  const [inspected, setInspected] = useState<InspectedWaveform | null>(null);
-  const [loadingWaveform, setLoadingWaveform] = useState<boolean>(false);
-  const [refittingSingle, setRefittingSingle] = useState<boolean>(false);
-  const [refittingBatch, setRefittingBatch] = useState<boolean>(false);
-  const [exporting, setExporting] = useState<boolean>(false);
-  const [exportInfo, setExportInfo] = useState<{ saved_path: string; sheets: string[] } | null>(
-    null
-  );
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{
+    saved_path: string;
+    used_fallback: boolean;
+    sheets: string[];
+  } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Editable repair parameters for the currently active queue item
-  const [repairRangeMin, setRepairRangeMin] = useState<number>(11.0);
-  const [repairRangeMax, setRepairRangeMax] = useState<number>(12.0);
-  const [repairCenters, setRepairCenters] = useState<number[]>([]);
-  const [repairWGs, setRepairWGs] = useState<number[]>([]);
-  const [repairWLs, setRepairWLs] = useState<number[]>([]);
-  const [repairAreas, setRepairAreas] = useState<number[]>([]);
-  const [repairVaryY0, setRepairVaryY0] = useState<boolean>(false);
+  useEffect(() => {
+    if (!activeGroup) return;
+    const outliers = activeGroup.outlier_nums || [];
+    setSelectedNums([...outliers].sort((a, b) => a - b));
+    setBatchSummary(null);
+    const defaultNum = outliers[0] ?? activeGroup.rows[0]?.num ?? null;
+    setInspectNum(defaultNum);
+  }, [selectedGid]);
 
-  const loadWaveformForItem = useCallback(
-    async (gid: string, num: number) => {
+  const loadWaveform = async (gid: string, num: number) => {
+    if (!folderPath || !gid) return;
+    setLoadingWaveform(true);
+    setErrorMsg(null);
+    try {
+      const data = await apiGet<WaveformInspection>(
+        `/api/fitting/waveform/${encodeURIComponent(gid)}/${num}?folder_path=${encodeURIComponent(folderPath)}`
+      );
+      setWaveform(data);
       const grp = batchResults[gid];
-      if (!grp) return;
-      setLoadingWaveform(true);
-      setErrorMsg(null);
-      try {
-        const res = await apiGet<InspectedWaveform>(
-          `/api/fitting/waveform/${encodeURIComponent(gid)}/${num}?folder_path=${encodeURIComponent(
-            folderPath
-          )}`
-        );
-        setInspected(res);
-        setRepairRangeMin(grp.th_min);
-        setRepairRangeMax(grp.th_max);
-        const r = res.row_data || {};
-        setRepairCenters(grp.peaks.map((pk) => Number(r[`2th_${pk}`] ?? 12.0)));
-        setRepairWGs(grp.peaks.map((pk) => Number(r[`wG_${pk}`] ?? 0.02)));
-        setRepairWLs(grp.peaks.map((pk) => Number(r[`wL_${pk}`] ?? 0.015)));
-        setRepairAreas(grp.peaks.map((pk) => Number(r[`I_${pk}`] ?? 100.0)));
-      } catch (err: unknown) {
-        setErrorMsg(err instanceof Error ? err.message : String(err));
-      } finally {
-        setLoadingWaveform(false);
+      if (grp) {
+        const xs = data.waveform?.x || [];
+        const fallbackMin = xs.length > 0 ? Math.min(...xs) : 0;
+        const fallbackMax = xs.length > 0 ? Math.max(...xs) : 0;
+        setRangeMin(Number(fmtFixed(grp.th_min ?? fallbackMin, 3)));
+        setRangeMax(Number(fmtFixed(grp.th_max ?? fallbackMax, 3)));
+
+        const row = data.row_data || {};
+        const nextParams: Record<string, PeakEditValues> = {};
+        grp.peaks.forEach((pk) => {
+          nextParams[pk] = {
+            center: Number(row[`2th_${pk}`] ?? 0),
+            wG: Number(row[`wG_${pk}`] ?? 0.05),
+            wL: Number(row[`wL_${pk}`] ?? 0.05),
+            amplitude: Number(row[`I_${pk}`] ?? 100),
+          };
+        });
+        setPeakParams(nextParams);
       }
-    },
-    [batchResults, folderPath]
+    } catch (e: any) {
+      setErrorMsg(e.message || '波形の読み込みに失敗しました');
+    } finally {
+      setLoadingWaveform(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeGroup && inspectNum !== null && folderPath) {
+      loadWaveform(activeGroup.group_id, inspectNum);
+    } else {
+      setWaveform(null);
+    }
+  }, [selectedGid, inspectNum]);
+
+  const outlierCountTotal = useMemo(
+    () => groupList.reduce((acc, g) => acc + (g.outlier_nums?.length || 0), 0),
+    [groupList]
   );
 
-  // Load waveform whenever activeQueueItem changes
-  useEffect(() => {
-    if (activeQueueItem) {
-      loadWaveformForItem(activeQueueItem.group_id, activeQueueItem.num);
+  const outlierSet = useMemo(
+    () => new Set(activeGroup?.outlier_nums || []),
+    [activeGroup?.outlier_nums]
+  );
+
+  const handleToggleQueueNum = (num: number) => {
+    setSelectedNums((prev) =>
+      prev.includes(num) ? prev.filter((n) => n !== num) : [...prev, num].sort((a, b) => a - b)
+    );
+  };
+
+  const handleSelectAllOutliers = () => {
+    if (!activeGroup) return;
+    setSelectedNums([...(activeGroup.outlier_nums || [])].sort((a, b) => a - b));
+  };
+
+  const handleSelectPhaseOutliers = (phase: 'gamma' | 'alpha') => {
+    if (!activeGroup) return;
+    const matchesPhase =
+      phase === 'gamma'
+        ? activeGroup.peaks.some((p) => p.toLowerCase().includes('gamma'))
+        : activeGroup.peaks.some((p) => p.toLowerCase().includes('alpha'));
+    if (!matchesPhase) {
+      setSelectedNums([]);
+      return;
     }
-  }, [activeQueueItem?.key, loadWaveformForItem]);
-
-  // --- Batch Selection Helpers ---
-  const handleSelectAll = () => {
-    const next: Record<string, boolean> = {};
-    for (const it of allQueueCandidates) next[it.key] = true;
-    setSelectedKeys(next);
-    setActiveQueueIndex(0);
+    setSelectedNums([...(activeGroup.outlier_nums || [])].sort((a, b) => a - b));
   };
 
-  const handleSelectPhase = (phase: 'gamma' | 'alpha') => {
-    const next: Record<string, boolean> = {};
-    for (const it of allQueueCandidates) {
-      next[it.key] = phase === 'gamma' ? it.hasGamma : it.hasAlpha;
-    }
-    setSelectedKeys(next);
-    setActiveQueueIndex(0);
-  };
-
-  const handleClearSelection = () => {
-    setSelectedKeys({});
-  };
+  const handleClearQueue = () => setSelectedNums([]);
 
   const handleAddManualNums = () => {
-    const grp = batchResults[manualGroupId];
-    if (!grp || !manualNumInput.trim()) return;
-    const nums = manualNumInput
-      .split(/[,\s]+/)
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => !Number.isNaN(n));
-    if (nums.length === 0) return;
+    if (!activeGroup || !manualInput.trim()) return;
+    const availableNums = new Set(activeGroup.rows.map((r) => r.num));
+    const parsed: number[] = [];
+    for (const part of manualInput.split(/[,、\s]+/)) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      if (trimmed.includes('-')) {
+        const [aStr, bStr] = trimmed.split('-');
+        const a = parseInt(aStr, 10);
+        const b = parseInt(bStr, 10);
+        if (!Number.isNaN(a) && !Number.isNaN(b)) {
+          const start = Math.min(a, b);
+          const end = Math.max(a, b);
+          for (let n = start; n <= end; n++) {
+            if (availableNums.has(n)) parsed.push(n);
+          }
+        }
+      } else {
+        const n = parseInt(trimmed, 10);
+        if (!Number.isNaN(n) && availableNums.has(n)) parsed.push(n);
+      }
+    }
+    if (parsed.length > 0) {
+      setSelectedNums((prev) => Array.from(new Set([...prev, ...parsed])).sort((a, b) => a - b));
+      setManualInput('');
+    }
+  };
 
-    const hasGamma = grp.peaks.some((p) => p.toLowerCase().startsWith('fcc'));
-    const hasAlpha = grp.peaks.some((p) => p.toLowerCase().startsWith('bcc'));
-    const phaseLabel =
-      hasGamma && hasAlpha
-        ? "γ-FCC + α'-BCC 重畳"
-        : hasGamma
-        ? 'γ-FCC (オーステナイト)'
-        : "α'-BCC (マルテンサイト)";
-
-    const newItems: OutlierQueueItem[] = nums.map((num) => ({
-      key: `${manualGroupId}::${num}`,
-      group_id: manualGroupId,
-      sheet_name: grp.sheet_name,
-      peaks: grp.peaks,
-      phaseLabel,
-      hasGamma,
-      hasAlpha,
-      num,
-      isFlaggedOutlier: (grp.outlier_nums || []).includes(num),
-    }));
-
-    setCustomAddedItems((prev) => [...prev, ...newItems]);
-    setSelectedKeys((prev) => {
-      const next = { ...prev };
-      for (const it of newItems) next[it.key] = true;
-      return next;
+  const applyUpdatedRowsToGroup = (
+    gid: string,
+    updates: Array<{ num: number; updated_row: Record<string, number> }>
+  ) => {
+    setBatchResults((prev) => {
+      const target = prev[gid];
+      if (!target) return prev;
+      const updateMap = new Map(updates.map((u) => [u.num, u.updated_row]));
+      const repairedNums = new Set(updates.map((u) => u.num));
+      const nextRows = target.rows.map((row) => {
+        const updated = updateMap.get(row.num);
+        return updated ? { ...row, ...updated } : row;
+      });
+      const nextOutlierNums = (target.outlier_nums || []).filter((n) => !repairedNums.has(n));
+      return {
+        ...prev,
+        [gid]: {
+          ...target,
+          rows: nextRows,
+          outlier_nums: nextOutlierNums,
+        },
+      };
     });
-    setManualNumInput('');
   };
 
-  // --- 1. Batch Smart Auto-Refit All Selected Items across All Phases ---
-  const handleBatchAutoRefitSelected = async () => {
-    if (checkedQueueItems.length === 0) return;
-    setRefittingBatch(true);
+  const handleBatchRefit = async () => {
+    if (!activeGroup || selectedNums.length === 0) return;
+    setIsRefittingBatch(true);
     setErrorMsg(null);
-    setStatusMessage(null);
+    setBatchSummary(null);
     try {
+      const items = selectedNums.map((num) => ({
+        group_id: activeGroup.group_id,
+        num,
+        peaks: activeGroup.peaks,
+        range_min: rangeMin || undefined,
+        range_max: rangeMax || undefined,
+        vary_y0: varyY0,
+      }));
       const res = await apiPost<BatchRefitResponse>('/api/fitting/refit-batch', {
         folder_path: folderPath,
-        use_neighbor_interpolation: true,
-        vary_y0: repairVaryY0,
-        items: checkedQueueItems.map((it) => ({
-          group_id: it.group_id,
-          num: it.num,
-          peaks: it.peaks,
-        })),
+        use_neighbor_interpolation: useNeighborInterpolation,
+        vary_y0: varyY0,
+        items,
       });
-
-      // Update batchResults state with all repaired rows
-      setBatchResults((prev) => {
-        const next = { ...prev };
-        for (const rep of res.repaired_items) {
-          const grp = next[rep.group_id];
-          if (!grp) continue;
-          const updatedRows = grp.rows.map((r) =>
-            Number(r.num) === rep.num ? rep.updated_row : r
-          );
-          const updatedOutliers = (grp.outlier_nums || []).filter((n) => n !== rep.num);
-          next[rep.group_id] = {
-            ...grp,
-            rows: updatedRows,
-            outlier_nums: updatedOutliers,
-          };
-        }
-        return next;
-      });
-
-      if (res.saved_path) {
-        setExportInfo({
-          saved_path: res.saved_path,
-          sheets: Object.values(batchResults).map((g) => g.sheet_name),
-        });
+      setBatchSummary(res);
+      const validUpdates = (res.repaired_items || []).map((item) => ({
+        num: item.num,
+        updated_row: item.updated_row,
+      }));
+      if (validUpdates.length > 0) {
+        applyUpdatedRowsToGroup(activeGroup.group_id, validUpdates);
       }
-      setStatusMessage(
-        `選択した ${res.repaired_count} 件（複数相・全対象ピーク）の要確認フレームを一括スマート再フィットし、解析ディレクトリの output.xlsx を自動更新しました。`
-      );
-      if (activeQueueItem) {
-        await loadWaveformForItem(activeQueueItem.group_id, activeQueueItem.num);
+      if (inspectNum !== null) {
+        await loadWaveform(activeGroup.group_id, inspectNum);
       }
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } catch (e: any) {
+      setErrorMsg(e.message || '一括再Fitに失敗しました');
     } finally {
-      setRefittingBatch(false);
+      setIsRefittingBatch(false);
     }
   };
 
-  // --- 2. Apply Current Individual Parameters to All Selected Items in the Same Group ---
-  const handleApplyCurrentParamsToSelectedInGroup = async () => {
-    if (!activeQueueItem) return;
-    const sameGroupItems = checkedQueueItems.filter(
-      (it) => it.group_id === activeQueueItem.group_id
-    );
-    if (sameGroupItems.length === 0) return;
-
-    setRefittingBatch(true);
-    setErrorMsg(null);
-    setStatusMessage(null);
-    try {
-      const res = await apiPost<BatchRefitResponse>('/api/fitting/refit-batch', {
-        folder_path: folderPath,
-        use_neighbor_interpolation: false,
-        vary_y0: repairVaryY0,
-        items: sameGroupItems.map((it) => ({
-          group_id: it.group_id,
-          num: it.num,
-          peaks: it.peaks,
-          range_min: repairRangeMin,
-          range_max: repairRangeMax,
-          initial_centers: repairCenters,
-          initial_wG: repairWGs,
-          initial_wL: repairWLs,
-          initial_A: repairAreas,
-          vary_y0: repairVaryY0,
-        })),
-      });
-
-      setBatchResults((prev) => {
-        const next = { ...prev };
-        for (const rep of res.repaired_items) {
-          const grp = next[rep.group_id];
-          if (!grp) continue;
-          next[rep.group_id] = {
-            ...grp,
-            rows: grp.rows.map((r) => (Number(r.num) === rep.num ? rep.updated_row : r)),
-            outlier_nums: (grp.outlier_nums || []).filter((n) => n !== rep.num),
-          };
-        }
-        return next;
-      });
-
-      setStatusMessage(
-        `グループ [${activeQueueItem.sheet_name}] の選択中 ${res.repaired_count} 件に現在の初期値・範囲設定を一括適用して個別フィットしました。`
-      );
-      await loadWaveformForItem(activeQueueItem.group_id, activeQueueItem.num);
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefittingBatch(false);
-    }
+  const buildOrderedInitialArrays = () => {
+    if (!activeGroup) return null;
+    const initial_centers = activeGroup.peaks.map((pk) => peakParams[pk]?.center ?? 0);
+    const initial_wG = activeGroup.peaks.map((pk) => peakParams[pk]?.wG ?? 0.05);
+    const initial_wL = activeGroup.peaks.map((pk) => peakParams[pk]?.wL ?? 0.05);
+    const initial_A = activeGroup.peaks.map((pk) => peakParams[pk]?.amplitude ?? 100);
+    return { initial_centers, initial_wG, initial_wL, initial_A };
   };
 
-  // --- 3. Refit Current Single Item & Advance Queue ---
-  const handleRepairSingleAndNext = async (advanceAfter = true) => {
-    if (!activeQueueItem) return;
-    setRefittingSingle(true);
+  const handleSingleRefit = async (advanceAfter = false) => {
+    if (!activeGroup || inspectNum === null) return;
+    const arrays = buildOrderedInitialArrays();
+    if (!arrays) return;
+    setIsRefittingSingle(true);
     setErrorMsg(null);
-    setStatusMessage(null);
     try {
       const res = await apiPost<{
         status: string;
@@ -402,86 +313,89 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         fit: CandidateFitResult;
       }>('/api/fitting/refit-file', {
         folder_path: folderPath,
-        group_id: activeQueueItem.group_id,
-        num: activeQueueItem.num,
-        peaks: activeQueueItem.peaks,
-        range_min: repairRangeMin,
-        range_max: repairRangeMax,
-        initial_centers: repairCenters,
-        initial_wG: repairWGs,
-        initial_wL: repairWLs,
-        initial_A: repairAreas,
-        vary_y0: repairVaryY0,
+        group_id: activeGroup.group_id,
+        num: inspectNum,
+        peaks: activeGroup.peaks,
+        range_min: rangeMin,
+        range_max: rangeMax,
+        ...arrays,
+        vary_y0: varyY0,
       });
 
-      setInspected({
-        num: res.num,
-        filename: res.fit.filename,
-        residual_rmse: res.fit.rmse,
-        relative_residual: res.fit.relative_residual,
-        is_outlier: false,
-        row_data: res.updated_row,
-        waveform: {
-          x: res.fit.x,
-          y_obs: res.fit.y_obs,
-          y_fit: res.fit.y_fit,
-          components: res.fit.components,
-        },
-      });
+      applyUpdatedRowsToGroup(activeGroup.group_id, [
+        { num: res.num, updated_row: res.updated_row },
+      ]);
+      await loadWaveform(activeGroup.group_id, inspectNum);
 
-      // Keep custom items so user can still see what they just fixed in the queue if desired
-      setCustomAddedItems((prev) => {
-        if (prev.some((p) => p.key === activeQueueItem.key)) return prev;
-        return [...prev, { ...activeQueueItem, isFlaggedOutlier: false }];
-      });
-
-      setBatchResults((prev) => {
-        const grp = prev[activeQueueItem.group_id];
-        if (!grp) return prev;
-        const updatedRows = grp.rows.map((r) =>
-          Number(r.num) === res.num ? res.updated_row : r
-        );
-        const updatedOutliers = (grp.outlier_nums || []).filter((n) => n !== res.num);
-        return {
-          ...prev,
-          [activeQueueItem.group_id]: {
-            ...grp,
-            rows: updatedRows,
-            outlier_nums: updatedOutliers,
-          },
-        };
-      });
-
-      setStatusMessage(
-        `[${activeQueueItem.sheet_name}] num=#${res.num} の個別再フィットを適用し、解析ディレクトリの output.xlsx を自動更新しました (R²=${fmtFixed(
-          res.fit.r_squared,
-          4
-        )})。`
-      );
-
-      if (advanceAfter && activeQueueIndex + 1 < checkedQueueItems.length) {
-        setActiveQueueIndex((idx) => idx + 1);
+      if (advanceAfter) {
+        const remaining = (activeGroup.outlier_nums || []).filter((n) => n !== inspectNum);
+        const nextOutlier = remaining.find((n) => n > inspectNum) ?? remaining[0];
+        if (nextOutlier !== undefined) {
+          setInspectNum(nextOutlier);
+        }
       }
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } catch (e: any) {
+      setErrorMsg(e.message || '単体再Fitに失敗しました');
     } finally {
-      setRefittingSingle(false);
+      setIsRefittingSingle(false);
     }
   };
 
-  // --- Export Excel ---
+  const handleStepQueue = (dir: -1 | 1) => {
+    if (!activeGroup || inspectNum === null) return;
+    const pool = selectedNums.length > 0 ? selectedNums : activeGroup.rows.map((r) => r.num);
+    if (!pool.length) return;
+    const idx = pool.indexOf(inspectNum);
+    const nextIdx = idx === -1 ? 0 : (idx + dir + pool.length) % pool.length;
+    setInspectNum(pool[nextIdx]);
+  };
+
+  const handleApplyParamsToSelected = async () => {
+    if (!activeGroup || selectedNums.length === 0) return;
+    const arrays = buildOrderedInitialArrays();
+    if (!arrays) return;
+    setIsRefittingBatch(true);
+    setErrorMsg(null);
+    setBatchSummary(null);
+    try {
+      const items = selectedNums.map((num) => ({
+        group_id: activeGroup.group_id,
+        num,
+        peaks: activeGroup.peaks,
+        range_min: rangeMin || undefined,
+        range_max: rangeMax || undefined,
+        ...arrays,
+        vary_y0: varyY0,
+      }));
+      const res = await apiPost<BatchRefitResponse>('/api/fitting/refit-batch', {
+        folder_path: folderPath,
+        use_neighbor_interpolation: false,
+        vary_y0: varyY0,
+        items,
+      });
+      setBatchSummary(res);
+      const validUpdates = (res.repaired_items || []).map((item) => ({
+        num: item.num,
+        updated_row: item.updated_row,
+      }));
+      if (validUpdates.length > 0) {
+        applyUpdatedRowsToGroup(activeGroup.group_id, validUpdates);
+      }
+      if (inspectNum !== null) {
+        await loadWaveform(activeGroup.group_id, inspectNum);
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || '選択キューへの適用に失敗しました');
+    } finally {
+      setIsRefittingBatch(false);
+    }
+  };
+
   const handleExportExcel = async () => {
-    setExporting(true);
+    if (groupList.length === 0) return;
+    setIsExporting(true);
     setErrorMsg(null);
     try {
-      const sheetPayload = Object.values(batchResults).map((grp) => ({
-        sheet_name: grp.sheet_name,
-        peaks: grp.peaks,
-        rows: grp.rows,
-        best_R: grp.best_R,
-        history_R: grp.history_R,
-        history_residual: grp.history_residual,
-      }));
       const res = await apiPost<{
         status: string;
         saved_path: string;
@@ -490,818 +404,720 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
       }>('/api/fitting/export', {
         folder_path: folderPath,
         specimen_name: specimenName || undefined,
-        groups: sheetPayload,
+        groups: groupList.map((grp) => ({
+          sheet_name: grp.sheet_name,
+          peaks: grp.peaks,
+          rows: grp.rows,
+          best_R: grp.best_R,
+          history_R: grp.history_R,
+          history_residual: grp.history_residual,
+        })),
       });
-      setExportInfo({ saved_path: res.saved_path, sheets: res.sheets });
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setExportResult(res);
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Excel出力に失敗しました');
     } finally {
-      setExporting(false);
+      setIsExporting(false);
     }
   };
 
-  // --- Waveform Chart Traces ---
-  const waveformTraces = useMemo(() => {
-    if (!inspected?.waveform) return [];
-    const wf = inspected.waveform;
+  const waveformTraces = useMemo<Record<string, unknown>[]>(() => {
+    if (!waveform?.waveform) return [];
+    const { x, y_obs, y_fit, components } = waveform.waveform;
     const traces: Record<string, unknown>[] = [
       {
-        x: wf.x,
-        y: wf.y_obs,
+        x,
+        y: y_obs,
         type: 'scatter',
-        mode: 'markers',
-        name: `観測データ (#${inspected.num})`,
-        marker: { color: '#a1a1aa', size: 5 },
+        mode: 'lines',
+        name: '実測値',
+        line: { color: '#787f90', width: 1.4 },
       },
       {
-        x: wf.x,
-        y: wf.y_fit,
+        x,
+        y: y_fit,
         type: 'scatter',
         mode: 'lines',
-        name: '合成Voigtフィット',
-        line: { color: '#10B981', width: 2.8 },
+        name: '合成フィッティング',
+        line: { color: '#34d399', width: 2 },
       },
     ];
-    for (const [pk, compY] of Object.entries(wf.components || {})) {
-      const isFcc = pk.toLowerCase().startsWith('fcc');
+    Object.entries(components || {}).forEach(([pk, yComp], idx) => {
       traces.push({
-        x: wf.x,
-        y: compY,
+        x,
+        y: yComp,
         type: 'scatter',
         mode: 'lines',
-        fill: 'tozeroy',
-        name: `${pk} (${isFcc ? 'γ-FCC' : "α'-BCC"})`,
+        name: pk,
         line: {
-          color: isFcc ? '#06B6D4' : '#F59E0B',
-          width: 2,
+          color: PEAK_COLORS[idx % PEAK_COLORS.length],
+          width: 1.5,
           dash: 'dot',
         },
-        fillcolor: isFcc ? 'rgba(6, 182, 212, 0.12)' : 'rgba(245, 158, 11, 0.12)',
-      });
-    }
-    return traces;
-  }, [inspected]);
-
-  // --- Trend Chart Traces for Screen 4-B ---
-  const activeTrendGroup = batchResults[activeTrendGroupId];
-  const trendTraces = useMemo(() => {
-    if (!activeTrendGroup) return { twoTh: [], area: [], fwhm: [], residual: [] };
-    const nums = activeTrendGroup.rows.map((r) => r.num);
-    const outlierSet = new Set(activeTrendGroup.outlier_nums || []);
-
-    const twoTh: Record<string, unknown>[] = [];
-    const area: Record<string, unknown>[] = [];
-    const fwhm: Record<string, unknown>[] = [];
-
-    activeTrendGroup.peaks.forEach((pk) => {
-      const isFcc = pk.toLowerCase().startsWith('fcc');
-      const baseColor = isFcc ? '#06B6D4' : '#F59E0B';
-      const markerColors = nums.map((n) => (outlierSet.has(n) ? '#EF4444' : baseColor));
-      const markerSizes = nums.map((n) => (outlierSet.has(n) ? 9 : 6));
-
-      twoTh.push({
-        x: nums,
-        y: activeTrendGroup.rows.map((r) => r[`2th_${pk}`]),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: `2θ_${pk}`,
-        line: { color: baseColor, width: 2 },
-        marker: { color: markerColors, size: markerSizes },
-      });
-
-      area.push({
-        x: nums,
-        y: activeTrendGroup.rows.map((r) => r[`I_${pk}`]),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: `I_${pk}`,
-        line: { color: baseColor, width: 2 },
-        marker: { color: markerColors, size: markerSizes },
-      });
-
-      fwhm.push({
-        x: nums,
-        y: activeTrendGroup.rows.map((r) => r[`FWHM_${pk}`]),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: `FWHM_${pk}`,
-        line: { color: baseColor, width: 2 },
-        marker: { color: markerColors, size: markerSizes },
       });
     });
+    return traces;
+  }, [waveform]);
 
-    const residual: Record<string, unknown>[] = [
+  const trendCenterTraces = useMemo<Record<string, unknown>[]>(() => {
+    if (!activeGroup) return [];
+    const xs = activeGroup.rows.map((r) => r.num);
+    return activeGroup.peaks.map((pk, idx) => ({
+      x: xs,
+      y: activeGroup.rows.map((r) => r[`2th_${pk}`] ?? null),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: `2θ (${pk})`,
+      marker: { size: 4, color: PEAK_COLORS[idx % PEAK_COLORS.length] },
+      line: { width: 1.5, color: PEAK_COLORS[idx % PEAK_COLORS.length] },
+    }));
+  }, [activeGroup]);
+
+  const trendIntensityTraces = useMemo<Record<string, unknown>[]>(() => {
+    if (!activeGroup) return [];
+    const xs = activeGroup.rows.map((r) => r.num);
+    return activeGroup.peaks.map((pk, idx) => ({
+      x: xs,
+      y: activeGroup.rows.map((r) => r[`I_${pk}`] ?? null),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: `I (${pk})`,
+      marker: { size: 4, color: PEAK_COLORS[idx % PEAK_COLORS.length] },
+      line: { width: 1.5, color: PEAK_COLORS[idx % PEAK_COLORS.length] },
+    }));
+  }, [activeGroup]);
+
+  const trendResidualTraces = useMemo<Record<string, unknown>[]>(() => {
+    if (!activeGroup) return [];
+    const xs = activeGroup.rows.map((r) => r.num);
+    const colors = activeGroup.rows.map((r) =>
+      outlierSet.has(r.num) ? '#fb7185' : '#38bdf8'
+    );
+    return [
       {
-        x: nums,
-        y: activeTrendGroup.rows.map((r) => r.residual ?? 0),
+        x: xs,
+        y: activeGroup.rows.map((r) => r.residual ?? 0),
         type: 'scatter',
         mode: 'lines+markers',
-        name: 'residual (相対残差)',
-        line: { color: '#10B981', width: 2 },
-        marker: {
-          color: nums.map((n) => (outlierSet.has(n) ? '#EF4444' : '#10B981')),
-          size: nums.map((n) => (outlierSet.has(n) ? 9 : 5)),
-        },
+        name: '相対残差',
+        line: { width: 1.25, color: '#525866' },
+        marker: { size: 5, color: colors },
       },
     ];
+  }, [activeGroup, outlierSet]);
 
-    return { twoTh, area, fwhm, residual };
-  }, [activeTrendGroup]);
+  if (groupList.length === 0) {
+    return (
+      <Panel className="max-w-xl mx-auto mt-8">
+        <PanelHeader title="バッチフィッティング結果がありません" />
+        <PanelBody>
+          <p className="text-[12px] text-[#787f90]">
+            Step 3 でバッチフィッティングを実行すると、外れ値の検証・手動再フィッティング・Excel 出力が可能になります。
+          </p>
+        </PanelBody>
+      </Panel>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Beginner Tutorial Guide Banner */}
-      <TutorialGuideBanner
-        mode="xrd"
-        stepTitle="Step 4: 全相・要確認フィットの一括選択＆個別フィット修復・Excel出力"
-        summary="連続フィッティング後に残差が大きかった要確認フレーム（num）を全相（γ相・α'相）まとめて一括選択し、一括スマート修復または順番に個別フィットできます。"
-        steps={[
-          {
-            badge: '手順 1',
-            title: '各相の要確認 num を一括選択（または任意の num を追加）',
-            description:
-              '左側のリストに全ピークグループの要確認 num が表示されます。「すべて一括選択」「γ相のみ」「α\'相のみ」でまとめて選択できます。',
-          },
-          {
-            badge: '手順 2',
-            title: '一括スマート再フィット または 順番に個別フィット',
-            description:
-              '「選択項目を一括スマート再フィット」で前後フレーム補間によりまとめて修復するか、右側のワークベンチで1件ずつ確認しながら個別フィットできます。',
-          },
-          {
-            badge: '手順 3',
-            title: 'output.xlsx に保存して Step 5（相分率・転位密度解析）へ',
-            description:
-              '修復が完了したら「output.xlsx 一括出力」を押し、「Step 5: 相分率・転位密度グラフへ進む」で材料組織解析へ進みます。',
-          },
-        ]}
-        tip="一画面がごちゃつかないよう、「① 要確認フィットの一括選択＆個別修復画面」と「② パラメータ推移グラフ＆データ表画面」をタブで切り替えられる設計になっています。"
-      />
+    <div className="space-y-3">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#121418] border border-[#23262e] rounded-md px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl<SubView>
+            ariaLabel="検証ビュー切替"
+            value={activeSubView}
+            onChange={setActiveSubView}
+            options={[
+              {
+                value: 'outlier_studio',
+                label: '波形・外れ値修正',
+                badge: outlierCountTotal > 0 ? outlierCountTotal : undefined,
+                accent: outlierCountTotal > 0 ? 'amber' : 'sky',
+              },
+              {
+                value: 'trend_and_export',
+                label: '時系列トレンド・Excel出力',
+                accent: 'emerald',
+              },
+            ]}
+          />
 
-      {/* Top Action & Screen Switch Bar */}
-      <div className="panel-card p-5 flex flex-wrap items-center justify-between gap-4">
-        <div data-tour="step4-subscreen-tabs" className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setSubScreen('outlier_studio')}
-            className={`px-5 py-3 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center gap-2 ${
-              subScreen === 'outlier_studio'
-                ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                : 'bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700'
-            }`}
-          >
-            <Wrench className="w-5 h-5" />
-            <span>① 要確認フィット 一括選択 ＆ 個別フィット修復 ({allQueueCandidates.length}件)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSubScreen('trend_and_export')}
-            className={`px-5 py-3 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center gap-2 ${
-              subScreen === 'trend_and_export'
-                ? 'bg-cyan-500 text-zinc-950 shadow-md shadow-cyan-500/20'
-                : 'bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700'
-            }`}
-          >
-            <Layers className="w-5 h-5" />
-            <span>② 全ピーク推移グラフ ＆ データテーブル確認</span>
-          </button>
-        </div>
-
-        <div data-tour="step4-export-btn" className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={handleExportExcel}
-            disabled={exporting || groupIds.length === 0}
-            className="btn-emerald"
-          >
-            {exporting ? (
-              <RefreshCw className="w-5 h-5 animate-spin" />
-            ) : (
-              <FileSpreadsheet className="w-5 h-5" />
-            )}
-            <span>
-              解析ディレクトリへ（{specimenName || '試料'}）output.xlsx を保存・更新
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onProceedStep5}
-            className="btn-amber"
-          >
-            <TrendingUp className="w-5 h-5" />
-            <span>Step 5: マルテンサイト相分率・転位密度解析へ進む</span>
-            <ArrowRight className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Notifications */}
-      {exportInfo && (
-        <div className="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/50 text-sm text-emerald-200 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-            <span>
-              <strong>Excel出力完了：</strong>{' '}
-              <code className="font-mono text-emerald-100">{exportInfo.saved_path}</code>{' '}
-              （シート: {exportInfo.sheets.join(', ')} ＋ Physical_Analysis）
-            </span>
-          </div>
-        </div>
-      )}
-
-      {statusMessage && (
-        <div className="p-4 rounded-xl bg-cyan-950/50 border border-cyan-500/40 text-sm text-cyan-200 flex items-center gap-2.5">
-          <Sparkles className="w-5 h-5 text-cyan-400 shrink-0" />
-          <span>{statusMessage}</span>
-        </div>
-      )}
-
-      {errorMsg && (
-        <div className="p-4 rounded-xl bg-red-950/50 border border-red-500/40 text-sm text-red-200 flex items-center gap-2.5">
-          <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
-          <span>{errorMsg}</span>
-        </div>
-      )}
-
-      {/* =====================================================================
-          SUB-SCREEN 4-A: Batch Outlier Selection & Queued Individual Fitting
-         ===================================================================== */}
-      {subScreen === 'outlier_studio' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Multi-Phase Outlier Batch Checklist */}
-          <div className="lg:col-span-5 panel-card p-5 space-y-4 flex flex-col">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-zinc-100">
-                  各相・全ピークの「要確認 num」一括選択リスト
-                </h3>
-                <p className="text-sm text-zinc-400">
-                  チェックを入れた項目をまとめて再フィット、または順番に個別フィットできます
-                </p>
-              </div>
-              <span className="px-3 py-1 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-sm font-mono font-bold text-cyan-300 tabular-nums">
-                選択中: {checkedQueueItems.length} / {allQueueCandidates.length}
-              </span>
-            </div>
-
-            {/* Batch Selection Filter Buttons */}
-            <div data-tour="step4-batch-select" className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleSelectAll}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs sm:text-sm font-medium text-zinc-100 flex items-center gap-1.5"
-              >
-                <CheckSquare className="w-4 h-4 text-cyan-400" />
-                すべて一括選択
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectPhase('gamma')}
-                className="px-3 py-1.5 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/40 text-xs sm:text-sm font-medium text-cyan-200"
-              >
-                γ-FCC相を一括選択
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectPhase('alpha')}
-                className="px-3 py-1.5 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/40 text-xs sm:text-sm font-medium text-amber-200"
-              >
-                α&apos;-BCC相を一括選択
-              </button>
-              <button
-                type="button"
-                onClick={handleClearSelection}
-                className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs sm:text-sm text-zinc-400"
-              >
-                選択解除
-              </button>
-            </div>
-
-            {/* Primary Batch Action Button */}
-            <button
-              type="button"
-              data-tour="step4-batch-refit-btn"
-              onClick={handleBatchAutoRefitSelected}
-              disabled={refittingBatch || checkedQueueItems.length === 0}
-              className="btn-primary w-full py-3"
-            >
-              {refittingBatch ? (
-                <>
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  <span>選択した {checkedQueueItems.length} 件を一括スマート再フィット中...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>
-                    選択した {checkedQueueItems.length} 件（全相）を一括スマート再フィット
-                  </span>
-                </>
-              )}
-            </button>
-
-            {/* Checklist Table */}
-            <div className="overflow-y-auto max-h-[380px] border border-zinc-800 rounded-xl divide-y divide-zinc-800/70">
-              {allQueueCandidates.length > 0 ? (
-                allQueueCandidates.map((item) => {
-                  const isChecked = Boolean(selectedKeys[item.key]);
-                  const isCurrentActive = activeQueueItem?.key === item.key;
-                  const checkedIdx = checkedQueueItems.findIndex((c) => c.key === item.key);
-
-                  return (
-                    <div
-                      key={item.key}
-                      onClick={() => {
-                        if (!isChecked) {
-                          setSelectedKeys((prev) => ({ ...prev, [item.key]: true }));
-                        }
-                        if (checkedIdx >= 0) {
-                          setActiveQueueIndex(checkedIdx);
-                        } else {
-                          loadWaveformForItem(item.group_id, item.num);
-                        }
-                      }}
-                      className={`p-3.5 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
-                        isCurrentActive
-                          ? 'bg-cyan-500/15 border-l-4 border-l-cyan-400'
-                          : 'hover:bg-zinc-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedKeys((prev) => ({
-                              ...prev,
-                              [item.key]: !prev[item.key],
-                            }));
-                          }}
-                          className="text-cyan-400 hover:text-cyan-300 shrink-0"
-                        >
-                          {isChecked ? (
-                            <CheckSquare className="w-5 h-5" />
-                          ) : (
-                            <Square className="w-5 h-5 text-zinc-500" />
-                          )}
-                        </button>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-base font-bold font-mono tabular-nums text-zinc-100">
-                              num #{item.num}
-                            </span>
-                            <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold bg-zinc-800 text-cyan-300 border border-zinc-700">
-                              {item.peaks.join(' + ')}
-                            </span>
-                          </div>
-                          <div className="text-xs text-zinc-400 mt-0.5">{item.phaseLabel}</div>
-                        </div>
-                      </div>
-
-                      <div className="shrink-0">
-                        {item.isFlaggedOutlier ? (
-                          <span className="px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-xs font-semibold text-amber-300">
-                            要確認
-                          </span>
-                        ) : (
-                          <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-xs font-semibold text-emerald-300">
-                            修復済 / 任意
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="p-8 text-center space-y-2">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-                  <div className="text-base font-bold text-zinc-200">
-                    現在、自動検出された要確認（外れ値）フレームはありません
-                  </div>
-                  <p className="text-sm text-zinc-400">
-                    下の入力欄から任意のファイル番号（num）を追加して一括・個別フィットすることも可能です。
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Add Arbitrary `num` to the Batch/Individual Queue */}
-            <div className="pt-3 border-t border-zinc-800 space-y-2">
-              <label className="text-sm font-semibold text-zinc-300 block">
-                任意のフレーム番号（num）を個別フィット対象に追加（カンマ区切りで複数可）
-              </label>
-              <div className="flex flex-wrap sm:flex-nowrap gap-2">
-                <select
-                  value={manualGroupId}
-                  onChange={(e) => setManualGroupId(e.target.value)}
-                  className="input-field sm:w-44 font-mono text-sm"
-                >
-                  {groupIds.map((gid) => (
-                    <option key={gid} value={gid}>
-                      {batchResults[gid]?.peaks.join('+') || gid}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={manualNumInput}
-                  onChange={(e) => setManualNumInput(e.target.value)}
-                  placeholder="例: 50, 450, 900"
-                  className="input-field font-mono text-sm flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddManualNums}
-                  className="btn-secondary shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>リストに追加</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Individual Fit Workbench with Queue Navigation */}
-          <div className="lg:col-span-7 panel-card p-5 space-y-5">
-            {activeQueueItem ? (
-              <>
-                {/* Queue Navigator Header */}
-                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-zinc-950 border border-zinc-800">
-                  <button
-                    type="button"
-                    onClick={() => setActiveQueueIndex((idx) => Math.max(0, idx - 1))}
-                    disabled={activeQueueIndex <= 0}
-                    className="btn-secondary py-2 px-3"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    <span>前の選択項目</span>
-                  </button>
-
-                  <div className="text-center">
-                    <div className="text-xs font-mono uppercase tracking-wider text-cyan-400">
-                      選択リスト 連続個別フィット ({Math.min(activeQueueIndex + 1, Math.max(1, checkedQueueItems.length))} /{' '}
-                      {Math.max(1, checkedQueueItems.length)} 件目)
-                    </div>
-                    <div className="text-lg font-bold text-zinc-100 font-mono tabular-nums mt-0.5">
-                      [{activeQueueItem.peaks.join(' + ')}] — ファイル番号 num #{activeQueueItem.num}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveQueueIndex((idx) =>
-                        Math.min(Math.max(0, checkedQueueItems.length - 1), idx + 1)
-                      )
-                    }
-                    disabled={activeQueueIndex >= checkedQueueItems.length - 1}
-                    className="btn-secondary py-2 px-3"
-                  >
-                    <span>次の選択項目</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Large Waveform & Component Separation Plot */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-semibold text-zinc-200">
-                      観測波形・Voigtフィット波形・各相成分プロファイル
-                    </span>
-                    {inspected && (
-                      <span className="font-mono tabular-nums text-zinc-300">
-                        残差 RMSE: {fmtFixed(inspected.residual_rmse, 3)} / 相対残差:{' '}
-                        {fmtFixed(inspected.relative_residual * 100, 2)}%
-                      </span>
-                    )}
-                  </div>
-
-                  <PlotlyChart
-                    data={waveformTraces}
-                    layout={{
-                      xaxis: { title: '回折角 2θ (deg)' },
-                      yaxis: { title: '強度 Intensity (a.u.)' },
-                    }}
-                    className="w-full h-[340px]"
-                  />
-                </div>
-
-                {/* Individual Peak Parameter Controls */}
-                <div className="space-y-4 pt-2 border-t border-zinc-800">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="label-sm block mb-1">
-                        フィット範囲 最小 `2θ_min` (deg)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={repairRangeMin}
-                        onChange={(e) => setRepairRangeMin(parseFloat(e.target.value) || 10.0)}
-                        className="input-field font-mono tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label className="label-sm block mb-1">
-                        フィット範囲 最大 `2θ_max` (deg)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={repairRangeMax}
-                        onChange={(e) => setRepairRangeMax(parseFloat(e.target.value) || 24.0)}
-                        className="input-field font-mono tabular-nums"
-                      />
-                    </div>
-                    <div className="flex items-end pb-1">
-                      <label className="flex items-center gap-2.5 text-sm text-zinc-200 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={repairVaryY0}
-                          onChange={(e) => setRepairVaryY0(e.target.checked)}
-                          className="w-4 h-4 rounded border-zinc-600 text-cyan-500 focus:ring-cyan-500"
-                        />
-                        <span>ベースラインオフセット `y0` も微調整する</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    {activeQueueItem.peaks.map((pk, idx) => {
-                      const isFcc = pk.toLowerCase().startsWith('fcc');
-                      return (
-                        <div
-                          key={pk}
-                          className="p-3.5 rounded-xl bg-zinc-950/90 border border-zinc-800 space-y-2"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`px-2.5 py-0.5 rounded text-xs font-mono font-bold ${
-                                isFcc
-                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                              }`}
-                            >
-                              {pk} ({isFcc ? 'γ-FCC相' : "α'-BCC相"})
-                            </span>
-                            <span className="text-xs text-zinc-400">
-                              初期値の指定（空欄やそのままで再フィット可能）
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            <div>
-                              <label className="text-xs text-zinc-400 block mb-1">
-                                中心角 `2θ` (deg)
-                              </label>
-                              <input
-                                type="number"
-                                step="0.005"
-                                value={repairCenters[idx] ?? 12.0}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0;
-                                  setRepairCenters((prev) =>
-                                    prev.map((v, i) => (i === idx ? val : v))
-                                  );
-                                }}
-                                className="input-field py-1.5 text-sm font-mono tabular-nums"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-zinc-400 block mb-1">
-                                積分強度 `A`
-                              </label>
-                              <input
-                                type="number"
-                                step="10"
-                                value={repairAreas[idx] ?? 100}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0;
-                                  setRepairAreas((prev) =>
-                                    prev.map((v, i) => (i === idx ? val : v))
-                                  );
-                                }}
-                                className="input-field py-1.5 text-sm font-mono tabular-nums"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-zinc-400 block mb-1">
-                                ガウス幅 `wG` (deg)
-                              </label>
-                              <input
-                                type="number"
-                                step="0.002"
-                                value={repairWGs[idx] ?? 0.02}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0.005;
-                                  setRepairWGs((prev) =>
-                                    prev.map((v, i) => (i === idx ? val : v))
-                                  );
-                                }}
-                                className="input-field py-1.5 text-sm font-mono tabular-nums"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-zinc-400 block mb-1">
-                                ローレンツ幅 `wL` (deg)
-                              </label>
-                              <input
-                                type="number"
-                                step="0.002"
-                                value={repairWLs[idx] ?? 0.015}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0.002;
-                                  setRepairWLs((prev) =>
-                                    prev.map((v, i) => (i === idx ? val : v))
-                                  );
-                                }}
-                                className="input-field py-1.5 text-sm font-mono tabular-nums"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Action Buttons for Individual & Group-Batch Fit */}
-                  <div className="flex flex-wrap gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleRepairSingleAndNext(true)}
-                      disabled={refittingSingle || loadingWaveform}
-                      className="btn-primary flex-1"
-                    >
-                      {refittingSingle ? (
-                        <RefreshCw className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <Wrench className="w-5 h-5" />
-                      )}
-                      <span>この num を個別再フィットして次の選択項目へ ▶</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleApplyCurrentParamsToSelectedInGroup}
-                      disabled={refittingBatch}
-                      className="btn-secondary"
-                      title="同じピークグループ内でチェックされているすべての num にこの設定を適用して一括フィットします"
-                    >
-                      <Layers className="w-4 h-4 text-cyan-400" />
-                      <span>同グループの選択中 num すべてにこの設定を一括適用</span>
-                    </button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="p-12 text-center text-zinc-400">
-                左のリストからフレームを選択するか、任意の `num` を追加してください。
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          SUB-SCREEN 4-B: Parameter Trend Charts & Unified Data Table
-         ===================================================================== */}
-      {subScreen === 'trend_and_export' && (
-        <div className="space-y-6">
-          {/* Group Selector Pills */}
-          <div className="panel-card p-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-bold text-zinc-300 mr-2">表示ピークグループ:</span>
-              {groupIds.map((gid) => {
-                const grp = batchResults[gid];
-                if (!grp) return null;
-                const isSelected = activeTrendGroupId === gid;
+          {groupList.length > 1 && (
+            <div className="flex items-center gap-1 border-l border-[#23262e] pl-2">
+              {groupList.map((g) => {
+                const count = g.outlier_nums?.length || 0;
                 return (
                   <button
-                    key={gid}
+                    key={g.group_id}
                     type="button"
-                    onClick={() => setActiveTrendGroupId(gid)}
-                    className={`px-4 py-2 rounded-lg text-sm font-mono font-semibold transition-all ${
-                      isSelected
-                        ? 'bg-cyan-500 text-zinc-950 shadow'
-                        : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
-                    }`}
+                    onClick={() => setSelectedGid(g.group_id)}
+                    className={cn(
+                      'h-7 px-2.5 rounded text-[11px] font-medium flex items-center gap-1.5 border transition-colors whitespace-nowrap',
+                      g.group_id === selectedGid
+                        ? 'bg-[#1c1f26] text-[#eceef2] border-[#38bdf8]/40'
+                        : 'bg-transparent text-[#787f90] border-transparent hover:text-[#b4b9c4] hover:bg-[#16181d]'
+                    )}
                   >
-                    {grp.peaks.join(' + ')}
-                    {grp.outlier_nums && grp.outlier_nums.length > 0 && (
-                      <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-xs">
-                        要確認 {grp.outlier_nums.length}
+                    <span className="truncate max-w-[140px]">{g.sheet_name}</span>
+                    {count > 0 && (
+                      <span className="text-[10px] font-mono tabular-nums text-[#f59e0b]">
+                        {count}
                       </span>
                     )}
                   </button>
                 );
               })}
             </div>
-            <span className="text-xs sm:text-sm text-zinc-400">
-              ※グラフ上の点をクリックすると「① 個別フィット修復画面」でそのフレームを開きます
-            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <StatusBadge
+            tone={outlierCountTotal > 0 ? 'amber' : 'emerald'}
+            dot
+            mono
+          >
+            外れ値 {outlierCountTotal}件
+          </StatusBadge>
+          <Button
+            variant="emerald"
+            size="sm"
+            onClick={onProceedStep5}
+            disabled={groupList.length === 0}
+          >
+            <span>物性値・転位密度解析へ</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {errorMsg && <Notice tone="error">{errorMsg}</Notice>}
+
+      {batchSummary && (
+        <Notice tone="success">
+          一括再フィッティング完了: {batchSummary.repaired_count}件を更新しました
+          {batchSummary.saved_path ? ` (${batchSummary.saved_path})` : ''}
+        </Notice>
+      )}
+
+      {activeSubView === 'outlier_studio' && activeGroup && (
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-3">
+          {/* Left 3 cols: Queue & file list */}
+          <div className="xl:col-span-3 space-y-3">
+            <Panel>
+              <PanelHeader
+                title="再フィッティングキュー"
+                subtitle={`${selectedNums.length} / ${activeGroup.rows.length} 選択`}
+              />
+              <PanelBody className="space-y-2.5">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <Button variant="secondary" size="xs" onClick={handleSelectAllOutliers}>
+                    全外れ値
+                  </Button>
+                  <Button variant="ghost" size="xs" onClick={handleClearQueue}>
+                    選択解除
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => handleSelectPhaseOutliers('gamma')}
+                  >
+                    γ相のみ
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => handleSelectPhaseOutliers('alpha')}
+                  >
+                    α'相のみ
+                  </Button>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <TextInput
+                    mono
+                    value={manualInput}
+                    onChange={(e) => setManualInput(e.target.value)}
+                    placeholder="番号追加 (例: 12, 15-18)"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddManualNums();
+                    }}
+                  />
+                  <Button variant="secondary" size="sm" onClick={handleAddManualNums}>
+                    追加
+                  </Button>
+                </div>
+
+                <CheckboxRow
+                  checked={useNeighborInterpolation}
+                  onChange={setUseNeighborInterpolation}
+                  label="隣接正常フレームから初期値を自動補間"
+                />
+
+                <Button
+                  variant="amber"
+                  size="sm"
+                  block
+                  onClick={handleBatchRefit}
+                  disabled={isRefittingBatch || selectedNums.length === 0}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>
+                    {isRefittingBatch
+                      ? '一括再Fit中...'
+                      : `選択 ${selectedNums.length}件を一括再Fit`}
+                  </span>
+                </Button>
+              </PanelBody>
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title="ファイル一覧"
+                subtitle={`${activeGroup.rows.length}件`}
+              />
+              <div className="max-h-[420px] overflow-y-auto divide-y divide-[#1a1d24]">
+                {activeGroup.rows.map((row) => {
+                  const isInspected = row.num === inspectNum;
+                  const isQueued = selectedNums.includes(row.num);
+                  const isOutlier = outlierSet.has(row.num);
+                  return (
+                    <div
+                      key={row.num}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-1.5 text-[11px] transition-colors',
+                        isInspected
+                          ? 'bg-[#1c1f26] text-[#eceef2]'
+                          : 'hover:bg-[#16181d] text-[#b4b9c4]'
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isQueued}
+                        onChange={() => handleToggleQueueNum(row.num)}
+                        aria-label={`#${row.num} を選択`}
+                        className="w-3.5 h-3.5 rounded border-[#2e323d] bg-[#0a0b0e] accent-[#38bdf8] shrink-0"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setInspectNum(row.num)}
+                        className="flex-1 flex items-center justify-between gap-2 text-left min-w-0"
+                      >
+                        <span className="font-mono tabular-nums font-medium">
+                          #{row.num}
+                        </span>
+                        <span className="font-mono tabular-nums text-[10px] text-[#787f90] truncate">
+                          R={fmtFixed(row.residual, 4)}
+                        </span>
+                        {isOutlier ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-[#f59e0b] shrink-0">
+                            <AlertTriangle className="w-3 h-3" />
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-[#34d399]/70 shrink-0">
+                            <Check className="w-3 h-3" />
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
           </div>
 
-          {activeTrendGroup && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              <div className="panel-card p-4">
-                <h4 className="text-base font-bold text-zinc-100 mb-2">
-                  回折角 2θ (deg) の連続推移
-                </h4>
+          {/* Center 6 cols: Waveform Plot */}
+          <div className="xl:col-span-6">
+            <PlotFrame
+              title={
+                waveform
+                  ? `#${waveform.num} (${waveform.filename})`
+                  : '波形インスペクター'
+              }
+              subtitle={
+                waveform
+                  ? `相対残差 ${(waveform.relative_residual * 100).toFixed(2)}% / RMSE ${fmtFixed(waveform.residual_rmse, 2)}`
+                  : 'ファイルを選択'
+              }
+              toolbar={
+                <div className="flex items-center gap-1.5">
+                  {waveform?.is_outlier && (
+                    <StatusBadge tone="amber" dot>
+                      外れ値
+                    </StatusBadge>
+                  )}
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => handleStepQueue(-1)}
+                    title="前のファイル"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => handleStepQueue(1)}
+                    title="次のファイル"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              }
+              subbar={
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#787f90]">
+                  <span>グループ: {activeGroup.sheet_name}</span>
+                  <span className="font-mono tabular-nums">
+                    best_R = {activeGroup.best_R !== undefined ? fmtFixed(activeGroup.best_R, 4) : '—'}
+                  </span>
+                </div>
+              }
+            >
+              {loadingWaveform ? (
+                <div className="h-[460px] flex items-center justify-center text-[12px] text-[#787f90]">
+                  波形データを読み込み中...
+                </div>
+              ) : waveformTraces.length > 0 ? (
                 <PlotlyChart
-                  data={trendTraces.twoTh}
+                  data={waveformTraces}
                   layout={{
-                    xaxis: { title: 'num' },
-                    yaxis: { title: '2θ (deg)' },
+                    xaxis: { title: '2θ [deg]' },
+                    yaxis: { title: '強度 [counts]' },
+                    margin: { t: 16, r: 16, b: 44, l: 56 },
                   }}
-                  onPointClick={(pt) => {
-                    const num = Math.round(pt.x);
-                    const key = `${activeTrendGroupId}::${num}`;
-                    setCustomAddedItems((prev) =>
-                      prev.some((p) => p.key === key)
-                        ? prev
-                        : [
-                            ...prev,
-                            {
-                              key,
-                              group_id: activeTrendGroupId,
-                              sheet_name: activeTrendGroup.sheet_name,
-                              peaks: activeTrendGroup.peaks,
-                              phaseLabel: 'グラフから選択',
-                              hasGamma: true,
-                              hasAlpha: true,
-                              num,
-                              isFlaggedOutlier: false,
-                            },
-                          ]
+                  className="w-full h-[460px]"
+                />
+              ) : (
+                <div className="h-[460px] flex items-center justify-center text-[12px] text-[#787f90]">
+                  左のリストから番号を選択してください
+                </div>
+              )}
+            </PlotFrame>
+          </div>
+
+          {/* Right 3 cols: Parameter Inspector & Single Refit */}
+          <div className="xl:col-span-3 space-y-3">
+            <Panel>
+              <PanelHeader
+                title="初期パラメータ編集"
+                subtitle={inspectNum !== null ? `#${inspectNum}` : undefined}
+                actions={
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#787f90]" />
+                }
+              />
+              <PanelBody className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <FieldLabel>Fit下限 (2θ)</FieldLabel>
+                    <UnitNumberInput
+                      unit="°"
+                      step="0.02"
+                      value={rangeMin}
+                      onChange={(e) => setRangeMin(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>Fit上限 (2θ)</FieldLabel>
+                    <UnitNumberInput
+                      unit="°"
+                      step="0.02"
+                      value={rangeMax}
+                      onChange={(e) => setRangeMax(parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                </div>
+
+                <CheckboxRow
+                  checked={varyY0}
+                  onChange={setVaryY0}
+                  label="ベースライン y0 を可変にする"
+                />
+
+                <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-0.5">
+                  {activeGroup.peaks.map((pk, idx) => {
+                    const p = peakParams[pk] || {
+                      center: 0,
+                      wG: 0.05,
+                      wL: 0.05,
+                      amplitude: 100,
+                    };
+                    const updatePeak = (field: keyof PeakEditValues, val: number) => {
+                      setPeakParams((prev) => ({
+                        ...prev,
+                        [pk]: {
+                          ...p,
+                          [field]: val,
+                        },
+                      }));
+                    };
+                    return (
+                      <div
+                        key={pk}
+                        className="bg-[#0a0b0e] border border-[#23262e] rounded p-2.5 space-y-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: PEAK_COLORS[idx % PEAK_COLORS.length] }}
+                          />
+                          <span className="text-[11px] font-medium text-[#eceef2] truncate">
+                            {pk}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div>
+                            <FieldLabel>中心 2θ</FieldLabel>
+                            <UnitNumberInput
+                              unit="°"
+                              step="0.01"
+                              value={p.center}
+                              onChange={(e) =>
+                                updatePeak('center', parseFloat(e.target.value) || 0)
+                              }
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>積分強度 I</FieldLabel>
+                            <UnitNumberInput
+                              step="10"
+                              value={p.amplitude}
+                              onChange={(e) =>
+                                updatePeak('amplitude', parseFloat(e.target.value) || 0)
+                              }
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Gauss幅 wG</FieldLabel>
+                            <UnitNumberInput
+                              step="0.005"
+                              value={p.wG}
+                              onChange={(e) =>
+                                updatePeak('wG', parseFloat(e.target.value) || 0)
+                              }
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Lorentz幅 wL</FieldLabel>
+                            <UnitNumberInput
+                              step="0.005"
+                              value={p.wL}
+                              onChange={(e) =>
+                                updatePeak('wL', parseFloat(e.target.value) || 0)
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
                     );
-                    setSelectedKeys((prev) => ({ ...prev, [key]: true }));
-                    loadWaveformForItem(activeTrendGroupId, num);
-                    setSubScreen('outlier_studio');
-                  }}
-                  className="w-full h-72"
-                />
-              </div>
+                  })}
+                </div>
 
-              <div className="panel-card p-4">
-                <h4 className="text-base font-bold text-zinc-100 mb-2">
-                  積分強度 I (Area A) の連続推移
-                </h4>
-                <PlotlyChart
-                  data={trendTraces.area}
-                  layout={{
-                    xaxis: { title: 'num' },
-                    yaxis: { title: '積分強度 I (a.u.)' },
-                  }}
-                  onPointClick={(pt) => {
-                    const num = Math.round(pt.x);
-                    loadWaveformForItem(activeTrendGroupId, num);
-                    setSubScreen('outlier_studio');
-                  }}
-                  className="w-full h-72"
-                />
-              </div>
+                <div className="space-y-1.5 pt-1 border-t border-[#23262e]">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    block
+                    onClick={() => handleSingleRefit(false)}
+                    disabled={isRefittingSingle || inspectNum === null}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{isRefittingSingle ? '再Fit実行中...' : '現在フレームを再Fit'}</span>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    block
+                    onClick={() => handleSingleRefit(true)}
+                    disabled={isRefittingSingle || inspectNum === null}
+                  >
+                    <span>再Fitして次の外れ値へ</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    block
+                    onClick={handleApplyParamsToSelected}
+                    disabled={isRefittingBatch || selectedNums.length === 0}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>この初期値を選択 {selectedNums.length}件に一括適用</span>
+                  </Button>
+                </div>
+              </PanelBody>
+            </Panel>
+          </div>
+        </div>
+      )}
 
-              <div className="panel-card p-4">
-                <h4 className="text-base font-bold text-zinc-100 mb-2">
-                  合成半値幅 FWHM (deg) の連続推移
-                </h4>
-                <PlotlyChart
-                  data={trendTraces.fwhm}
-                  layout={{
-                    xaxis: { title: 'num' },
-                    yaxis: { title: 'FWHM (deg)' },
-                  }}
-                  onPointClick={(pt) => {
-                    const num = Math.round(pt.x);
-                    loadWaveformForItem(activeTrendGroupId, num);
-                    setSubScreen('outlier_studio');
-                  }}
-                  className="w-full h-72"
-                />
-              </div>
+      {activeSubView === 'trend_and_export' && activeGroup && (
+        <div className="space-y-3">
+          {/* Export bar */}
+          <Panel>
+            <PanelHeader
+              title="Excel ワークブック出力"
+              subtitle={`グループ数: ${groupList.length}`}
+              actions={
+                <Button
+                  variant="emerald"
+                  size="sm"
+                  onClick={handleExportExcel}
+                  disabled={isExporting}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isExporting ? '出力中...' : 'Excel (.xlsx) を出力'}</span>
+                </Button>
+              }
+            />
+            {exportResult && (
+              <PanelBody>
+                <Notice tone={exportResult.used_fallback ? 'warning' : 'success'}>
+                  <div className="space-y-1">
+                    <div className="font-medium">
+                      保存完了: <span className="font-mono">{exportResult.saved_path}</span>
+                    </div>
+                    <div className="text-[11px] opacity-90">
+                      シート: {exportResult.sheets.join(', ')}
+                      {exportResult.used_fallback
+                        ? ' (元ファイルが使用中だったため別名で保存しました)'
+                        : ''}
+                    </div>
+                  </div>
+                </Notice>
+              </PanelBody>
+            )}
+          </Panel>
 
-              <div className="panel-card p-4 lg:col-span-3">
-                <h4 className="text-base font-bold text-zinc-100 mb-2">
-                  フレームごとの相対残差 `residual` の連続推移（クリックで個別フィット修復へ）
-                </h4>
-                <PlotlyChart
-                  data={trendTraces.residual}
-                  layout={{
-                    xaxis: { title: 'num' },
-                    yaxis: { title: 'Relative Residual (residual)' },
-                  }}
-                  onPointClick={(pt) => {
-                    const num = Math.round(pt.x);
-                    loadWaveformForItem(activeTrendGroupId, num);
-                    setSubScreen('outlier_studio');
-                  }}
-                  className="w-full h-56"
-                />
-              </div>
+          {/* Trend Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <PlotFrame
+              title="ピーク位置推移 (2θ)"
+              subtitle="点をクリックすると波形検証へ移動"
+            >
+              <PlotlyChart
+                data={trendCenterTraces}
+                layout={{
+                  xaxis: { title: 'フレーム番号' },
+                  yaxis: { title: '2θ [deg]' },
+                  margin: { t: 16, r: 16, b: 42, l: 56 },
+                }}
+                className="w-full h-[300px]"
+                onPointClick={(pt) => {
+                  if (typeof pt.x === 'number') {
+                    setInspectNum(pt.x);
+                    setActiveSubView('outlier_studio');
+                  }
+                }}
+              />
+            </PlotFrame>
+
+            <PlotFrame
+              title="積分強度推移 (I)"
+              subtitle="点をクリックすると波形検証へ移動"
+            >
+              <PlotlyChart
+                data={trendIntensityTraces}
+                layout={{
+                  xaxis: { title: 'フレーム番号' },
+                  yaxis: { title: '積分強度' },
+                  margin: { t: 16, r: 16, b: 42, l: 56 },
+                }}
+                className="w-full h-[300px]"
+                onPointClick={(pt) => {
+                  if (typeof pt.x === 'number') {
+                    setInspectNum(pt.x);
+                    setActiveSubView('outlier_studio');
+                  }
+                }}
+              />
+            </PlotFrame>
+          </div>
+
+          <PlotFrame
+            title="相対残差 (Relative Residual) 推移"
+            subtitle="赤: 外れ値判定フレーム / クリックで該当波形を開く"
+          >
+            <PlotlyChart
+              data={trendResidualTraces}
+              layout={{
+                xaxis: { title: 'フレーム番号' },
+                yaxis: { title: '相対残差 [-]' },
+                margin: { t: 16, r: 16, b: 42, l: 56 },
+              }}
+              className="w-full h-[240px]"
+              onPointClick={(pt) => {
+                if (typeof pt.x === 'number') {
+                  setInspectNum(pt.x);
+                  setActiveSubView('outlier_studio');
+                }
+              }}
+            />
+          </PlotFrame>
+
+          {/* Summary Table */}
+          <Panel>
+            <PanelHeader
+              title="フィッティングパラメータ一覧"
+              subtitle={`${activeGroup.sheet_name} (${activeGroup.rows.length}行)`}
+            />
+            <div className="max-h-[320px] overflow-auto">
+              <table className="w-full text-[11px] font-mono tabular-nums border-collapse">
+                <thead className="sticky top-0 bg-[#121418] border-b border-[#23262e] text-[#787f90]">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">#</th>
+                    <th className="text-left px-3 py-2 font-medium">状態</th>
+                    <th className="text-right px-3 py-2 font-medium">相対残差</th>
+                    {activeGroup.peaks.map((pk) => (
+                      <React.Fragment key={pk}>
+                        <th className="text-right px-3 py-2 font-medium">2θ ({pk})</th>
+                        <th className="text-right px-3 py-2 font-medium">I ({pk})</th>
+                        <th className="text-right px-3 py-2 font-medium">FWHM ({pk})</th>
+                      </React.Fragment>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1a1d24]">
+                  {activeGroup.rows.map((row) => {
+                    const isOutlier = outlierSet.has(row.num);
+                    return (
+                      <tr
+                        key={row.num}
+                        onClick={() => {
+                          setInspectNum(row.num);
+                          setActiveSubView('outlier_studio');
+                        }}
+                        className="hover:bg-[#1c1f26] cursor-pointer text-[#b4b9c4]"
+                      >
+                        <td className="px-3 py-1.5 text-[#eceef2]">{row.num}</td>
+                        <td className="px-3 py-1.5">
+                          {isOutlier ? (
+                            <span className="text-[#f59e0b]">外れ値</span>
+                          ) : (
+                            <span className="text-[#34d399]">正常</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5 text-right">{fmtSci(row.residual, 2)}</td>
+                        {activeGroup.peaks.map((pk) => (
+                          <React.Fragment key={pk}>
+                            <td className="px-3 py-1.5 text-right">
+                              {fmtFixed(row[`2th_${pk}`], 4)}
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              {fmtFixed(row[`I_${pk}`], 1)}
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              {fmtFixed(row[`FWHM_${pk}`], 4)}
+                            </td>
+                          </React.Fragment>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          )}
+          </Panel>
         </div>
       )}
     </div>
