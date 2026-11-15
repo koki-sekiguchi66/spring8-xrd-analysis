@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Play,
   Sliders,
@@ -21,7 +21,7 @@ import { Notice } from './ui/Notice';
 import { apiPost, fmtFixed, runFittingStream } from '../lib/utils';
 import { applyInitialExcel, type InitialExcelData } from '../lib/initialExcel';
 import { ENGINE_RUN_DEFAULTS, defaultLimitsFor } from '../lib/engineDefaults';
-import type { BatchGroupResult, FitLimitConfig, GroupBatchConfig } from '../types/xrd';
+import type { BatchGroupResult, FitLimitConfig, GroupBatchConfig, PeakFitParam } from '../types/xrd';
 
 export interface Step3BatchRunProps {
   folderPath: string;
@@ -86,7 +86,36 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
   const [liveRowsByGroup, setLiveRowsByGroup] = useState<Record<string, Record<string, number>[]>>({});
   const [liveWaveform, setLiveWaveform] = useState<LiveWaveformState | null>(null);
 
-  /** Load Origin / Harada `_initial.xlsx` and overwrite the matching groups' initial values. */
+  // Harada's procedure: the initial values come from `_initial.xlsx` (the file saved in Step 2, or
+  // one chosen here). It is read on entering Step 3 and read again at run time, so values edited in
+  // Excel / Origin after Step 2 are used.
+  const [initData, setInitData] = useState<InitialExcelData | null>(null);
+  const activeInitPath = loadedInitPath || initialExcelPath;
+
+  const loadInitialExcel = async (path: string, configs: GroupBatchConfig[]): Promise<GroupBatchConfig[]> => {
+    const data = await apiPost<InitialExcelData>('/api/initial/load-excel', { excel_path: path });
+    const res = applyInitialExcel(configs, data);
+    setInitData(data);
+    setBatchConfigs(res.configs);
+    const parts = [`初期値ファイルから ${res.applied.length} 群に適用`];
+    if (res.skipped.length) parts.push(`Step2 の値を使用: ${res.skipped.map((x) => `${x.group_id} (${x.reason})`).join(' / ')}`);
+    if (res.warnings.length) parts.push(res.warnings.join(' / '));
+    setInitLoadMsg(parts.join(' · '));
+    return res.configs;
+  };
+
+  const autoLoadedRef = useRef<string>('');
+  useEffect(() => {
+    if (!initialExcelPath || loadedInitPath || autoLoadedRef.current === initialExcelPath) return;
+    if (batchConfigs.length === 0 || Object.keys(batchResults).length > 0) return;
+    autoLoadedRef.current = initialExcelPath;
+    loadInitialExcel(initialExcelPath, batchConfigs).catch((e: any) =>
+      setError(`初期値ファイルの読込エラー: ${e.message || e}`)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialExcelPath, batchConfigs.length]);
+
+  /** Choose another Origin / Harada `_initial.xlsx` and use it from now on. */
   const handleLoadInitialExcel = async () => {
     setError(null);
     try {
@@ -96,14 +125,8 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
       );
       const picked = pick.selected_path || pick.path;
       if (pick.cancelled || !picked) return;
-      const data = await apiPost<InitialExcelData>('/api/initial/load-excel', { excel_path: picked });
-      const res = applyInitialExcel(batchConfigs, data);
-      setBatchConfigs(res.configs);
-      setLoadedInitPath(data.excel_path);
-      const parts = [`適用 ${res.applied.length} グループ`];
-      if (res.skipped.length) parts.push(`未適用 ${res.skipped.map((x) => `${x.group_id} (${x.reason})`).join(' / ')}`);
-      if (res.warnings.length) parts.push(res.warnings.join(' / '));
-      setInitLoadMsg(parts.join(' · '));
+      await loadInitialExcel(picked, batchConfigs);
+      setLoadedInitPath(picked);
     } catch (e: any) {
       setError(e.message || '初期値 Excel の読込エラー');
     }
@@ -121,7 +144,12 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
     engine: GroupBatchConfig['engine']
   ): Partial<GroupBatchConfig> => {
     const opts = cfg.init_options;
-    if (!opts || (engine !== '2PeaksRatio' && engine !== '3PeaksLuders')) return {};
+    if (!opts) return {};
+    if (engine !== '2PeaksRatio' && engine !== '3PeaksLuders') {
+      // back to the Step 2 frame
+      const n0 = cfg.step2_num;
+      return n0 !== undefined && opts[String(n0)] ? { init_num: n0, init_peaks: opts[String(n0)] } : {};
+    }
     const nums = Object.keys(opts)
       .map(Number)
       .sort((a, b) => b - a);
@@ -138,7 +166,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
   };
 
   /** Harada's cold-rolled flow: 2PeaksRatio (num <= onset) + 3PeaksLuders (num >= onset, R = best_R). */
-  const addLudersGroup = (cfg: GroupBatchConfig) => {
+  const addLudersGroup = async (cfg: GroupBatchConfig) => {
     const id = `${cfg.group_id}_luders`;
     if (batchConfigs.some((c) => c.group_id === id)) return;
     const base: GroupBatchConfig = {
@@ -150,7 +178,33 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
       ...ENGINE_RUN_DEFAULTS['3PeaksLuders'],
       default_fit_limits: undefined,
     };
-    setBatchConfigs((prev) => [...prev, { ...base, ...pickInitFor(base, '3PeaksLuders') }]);
+    let next: GroupBatchConfig = { ...base, ...pickInitFor(base, '3PeaksLuders') };
+    // As in Harada's procedure: 3-peak Origin fit of a post-onset frame written to `_initial.xlsx`
+    if (activeInitPath && next.init_num >= next.dimt_onset_num && next.init_peaks.length === 2) {
+      try {
+        const res = await apiPost<{ num: number; peaks: PeakFitParam[]; appended: boolean }>(
+          '/api/initial/luders-block',
+          {
+            folder_path: folderPath,
+            excel_path: activeInitPath,
+            num: next.init_num,
+            base_peaks: next.init_peaks,
+            range_min: next.th_min,
+            range_max: next.th_max,
+            v3_center_cap: next.v3_center_cap ?? 11.65,
+          }
+        );
+        next = { ...next, init_num: res.num, init_peaks: res.peaks };
+        const data = await apiPost<InitialExcelData>('/api/initial/load-excel', { excel_path: activeInitPath });
+        setInitData(data);
+        setInitLoadMsg(
+          `${id}: 3 ピーク初期値 (No ${res.num}) を${res.appended ? '初期値ファイルに追加' : '初期値ファイルから使用'}`
+        );
+      } catch (e: any) {
+        setError(`Lüders 初期値の作成エラー: ${e.message || e}`);
+      }
+    }
+    setBatchConfigs((prev) => [...prev, next]);
   };
 
   const updatePeakLimit = (
@@ -185,6 +239,16 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
       return;
     }
 
+    let runConfigs = batchConfigs;
+    if (activeInitPath) {
+      try {
+        runConfigs = await loadInitialExcel(activeInitPath, batchConfigs);
+      } catch (e: any) {
+        setError(`初期値ファイルを読めないため中止しました: ${e.message || e}`);
+        return;
+      }
+    }
+
     setRunning(true);
     setCompletedAll(false);
     setError(null);
@@ -199,7 +263,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         {
           folder_path: folderPath,
           specimen_name: specimenName,
-          groups: batchConfigs,
+          groups: runConfigs,
         },
         (rawMsg) => {
           const msg = rawMsg as Record<string, any>;
@@ -532,12 +596,21 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                         onChange={(e) => {
                           const engine = e.target.value as GroupBatchConfig['engine'];
                           // Switch to the residual criterion and per-frame limits of that engine's original script
-                          updateGroupConfig(cfg.group_id, {
+                          const switched: GroupBatchConfig = {
+                            ...cfg,
                             engine,
                             ...ENGINE_RUN_DEFAULTS[engine],
                             default_fit_limits: undefined,
-                            ...pickInitFor(cfg, engine),
-                          });
+                          };
+                          const fromFile = initData
+                            ? applyInitialExcel([switched], initData)
+                            : null;
+                          updateGroupConfig(
+                            cfg.group_id,
+                            fromFile && fromFile.applied.length
+                              ? fromFile.configs[0]
+                              : { ...switched, ...pickInitFor(cfg, engine) }
+                          );
                         }}
                         className="w-40 h-7 text-xs"
                       >

@@ -298,3 +298,24 @@ def test_cold_rolled_groups_disable_pre_onset_zeroing_and_luders_init():
                                   "v2_center": 11.45, "v2_amplitude": 900.0, "v2_sigma": 0.1, "v2_gamma": 0.1})
     assert p["v2_amplitude"] == pytest.approx(300.0) and p["v3_amplitude"] == pytest.approx(600.0)
     assert p["v2_center"] < p["v3_center"] < cfg.v3_center_cap
+
+
+def test_initial_excel_blocks_roundtrip(tmp_path: Path):
+    """Step 2 writes one block per group and frame; Step 3 reads them back (2-peak blocks carry R sets)."""
+    from backend.core.excel_io import append_initial_block, read_initial_blocks, save_initial_excel
+
+    pk = lambda n, xc, A: {"peak_name": n, "y0": 0.0, "xc": xc, "A": A, "wG": 0.02, "wL": 0.01}
+    path = save_initial_excel(tmp_path, "s", [], group_blocks=[
+        {"No": 10, "peaks": [pk("fcc111", 11.2, 1000.0), pk("bcc110", 11.45, 300.0)], "ratio_rows": True},
+        {"No": 10, "peaks": [pk("fcc200", 12.9, 600.0)], "ratio_rows": False},
+        {"No": 280, "peaks": [pk("fcc111", 11.2, 700.0), pk("bcc110", 11.45, 900.0)], "ratio_rows": True},
+    ])
+    blocks = read_initial_blocks(path)
+    assert [(b["peaks"], b["rows"][0]["No"], len(b["rows"])) for b in blocks] == [
+        (["fcc111", "bcc110"], 10, 5), (["fcc200"], 10, 1), (["fcc111", "bcc110"], 280, 5)]
+    r = [row["entries"]["bcc110"]["A"] / row["entries"]["fcc111"]["A"] for row in blocks[0]["rows"]]
+    assert r == pytest.approx([0.3, 0.27, 0.285, 0.315, 0.33])
+    lud = [pk("fcc111a", 11.2, 700.0), pk("bcc110a", 11.45, 300.0), pk("bcc1102", 11.5, 600.0)]
+    assert append_initial_block(path, lud, 280)["appended"] is True
+    assert append_initial_block(path, lud, 280)["appended"] is False  # existing (possibly hand-edited) block kept
+    assert read_initial_blocks(path)[-1]["peaks"] == ["fcc111a", "bcc110a", "bcc1102"]

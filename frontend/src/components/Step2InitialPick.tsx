@@ -304,12 +304,20 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
     const selectedPeakRows: PeakFitParam[] = [];
     const batchConfigs: GroupBatchConfig[] = [];
+    // `_initial.xlsx`: one block per group and representative frame (Step 3 reads the file back)
+    const groupBlocks: { group_id: string; No: number; peaks: PeakFitParam[]; ratio_rows: boolean }[] = [];
 
     for (const g of chosenGroups) {
       const fit = g.fits_by_num[String(g.selected_num)];
       if (!fit || !fit.peaks || fit.peaks.length === 0) continue;
       for (const pk of fit.peaks) {
         selectedPeakRows.push(pk);
+      }
+      const ratioRows = g.peaks.length === 2 && (g.supported_engines ?? []).includes('2PeaksRatio');
+      groupBlocks.push({ group_id: g.group_id, No: g.selected_num, peaks: fit.peaks, ratio_rows: ratioRows });
+      for (const [n, f] of Object.entries(g.fits_by_num)) {
+        if (Number(n) === g.selected_num || !f || f.error || f.peaks?.length !== g.peaks.length) continue;
+        groupBlocks.push({ group_id: g.group_id, No: Number(n), peaks: f.peaks, ratio_rows: ratioRows });
       }
 
       const cFirst = fit.peaks[0].xc;
@@ -338,6 +346,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
           .filter((idx) => idx >= 0),
         use_bcc211_constraint: false,
         bcc110_center_tol_deg: 0.05,
+        step2_num: g.selected_num,
         init_options: Object.fromEntries(
           Object.entries(g.fits_by_num)
             .filter(([, f]) => f && !f.error && f.peaks && f.peaks.length === g.peaks.length)
@@ -353,6 +362,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         folder_path: folderPath,
         specimen_name: specimenName,
         selected_peaks: selectedPeakRows,
+        group_blocks: groupBlocks,
       });
       onConfirmInitialAndProceed(batchConfigs, saveRes.saved_path);
     } catch (err) {

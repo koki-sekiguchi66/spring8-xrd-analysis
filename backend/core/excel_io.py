@@ -61,103 +61,100 @@ def build_unified_columns(peaks: List[str]) -> List[str]:
     return cols
 
 
+_RATIO_MULTIPLIERS = [1.0, 0.90, 0.95, 1.05, 1.10]
+
+
+def _write_initial_block(
+    ws: Any,
+    start_row: int,
+    items: List[Dict[str, Any]],
+    no_val: int,
+    n_rows: int = 1,
+    perturb_idx: Optional[int] = None,
+) -> int:
+    """Write one block (peak names / `No y0 xc A wG wL FWHM ...` / data rows); return the next free row.
+
+    Rows 2.. scale the amplitude of peak `perturb_idx` by 0.90 / 0.95 / 1.05 / 1.10: the initial-value
+    sets from which 2PeaksRatio (ver10) takes its coarse R candidates (A2 / A1 of each row).
+    """
+    c_no = ws.cell(row=start_row + 1, column=1, value="No")
+    c_no.font = SUBHEADER_FONT
+    c_no.fill = SUBHEADER_FILL
+    c_no.alignment = Alignment(horizontal="center")
+    c_no.border = THIN_BORDER
+    for idx, pk in enumerate(items):
+        base_col = 2 + idx * 6
+        c_main = ws.cell(row=start_row, column=base_col, value=str(pk["peak_name"]))
+        c_main.font = HEADER_FONT
+        c_main.fill = HEADER_FILL
+        c_main.alignment = Alignment(horizontal="center")
+        for offset, sh in enumerate(["y0", "xc", "A", "wG", "wL", "FWHM"]):
+            c_sub = ws.cell(row=start_row + 1, column=base_col + offset, value=sh)
+            c_sub.font = SUBHEADER_FONT
+            c_sub.fill = SUBHEADER_FILL
+            c_sub.alignment = Alignment(horizontal="center")
+            c_sub.border = THIN_BORDER
+    for r_idx in range(max(1, n_rows)):
+        data_row = start_row + 2 + r_idx
+        c_num = ws.cell(row=data_row, column=1, value=int(no_val))
+        c_num.font = ARIAL_FONT
+        c_num.border = THIN_BORDER
+        mult = _RATIO_MULTIPLIERS[r_idx % len(_RATIO_MULTIPLIERS)]
+        for idx, pk in enumerate(items):
+            base_col = 2 + idx * 6
+            A = float(pk["A"]) * (mult if (r_idx > 0 and idx == perturb_idx) else 1.0)
+            wG, wL = float(pk["wG"]), float(pk["wL"])
+            fwhm = float(pk.get("FWHM") or calc_origin_fwhm(wG, wL))
+            vals = [float(pk.get("y0", 0.0) or 0.0), float(pk["xc"]), A, wG, wL, fwhm]
+            for offset, val in enumerate(vals):
+                cell = ws.cell(row=data_row, column=base_col + offset, value=round(val, 5))
+                cell.font = ARIAL_FONT
+                cell.border = THIN_BORDER
+    return start_row + 2 + max(1, n_rows) + 1  # one blank row between blocks
+
+
 def save_initial_excel(
     folder_path: str | Path,
     specimen_name: str,
     peaks_data: List[Dict[str, Any]],
     num_ratio_sets: int = 5,
+    group_blocks: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """Generate `(specimen_name)_initial.xlsx` with 2-row header blocks compatible with legacy scripts.
+    """Generate `(specimen_name)_initial.xlsx` (Origin / Harada layout, read back by Step 3).
 
-    Args:
-        folder_path: Target specimen directory.
-        specimen_name: Specimen identifier.
-        peaks_data: List of dicts with keys:
-            `peak_name` (str), `No` (int), `y0` (float), `xc` (float),
-            `A` (float), `wG` (float), `wL` (float), `FWHM` (optional float).
-        num_ratio_sets: Number of stacked initial rows to write for multi-row ratio search compatibility.
-    Returns:
-        Saved Excel file path as string.
+    `group_blocks`: one block per analysis group and representative frame,
+    `{"No": int, "peaks": [peak dicts in group order], "ratio_rows": bool}`. A 2-peak group with
+    `ratio_rows` gets `num_ratio_sets` rows (second peak amplitude x 1.0 / 0.90 / 0.95 / 1.05 / 1.10).
+    Without `group_blocks`, `peaks_data` is written as one block per `No` (legacy, single row).
     """
     root = resolve_analyzed_folder(folder_path)
     root.mkdir(parents=True, exist_ok=True)
     excel_path = root / f"{specimen_name}_initial.xlsx"
 
-    # Group peaks by their source file number `No` so each `No` forms a 2-row header block
-    grouped_by_no: Dict[int, List[Dict[str, Any]]] = {}
-    for item in peaks_data:
-        no_val = int(item.get("No", 50))
-        grouped_by_no.setdefault(no_val, []).append(item)
-
     wb = openpyxl.Workbook()
     ws = wb.active
-    sheet_title = f"{specimen_name}_initial"[:31]
-    ws.title = sheet_title
+    ws.title = f"{specimen_name}_initial"[:31]
 
-    current_row = 1
-    ratio_multipliers = [1.0, 0.90, 0.95, 1.05, 1.10]
+    row = 1
+    if group_blocks:
+        for blk in group_blocks:
+            items = [pk for pk in blk.get("peaks", []) if pk.get("xc") is not None and pk.get("A") is not None]
+            if not items:
+                continue
+            ratio = bool(blk.get("ratio_rows")) and len(items) == 2
+            row = _write_initial_block(
+                ws, row, items, int(blk.get("No", items[0].get("No", 1))),
+                n_rows=num_ratio_sets if ratio else 1, perturb_idx=1 if ratio else None,
+            )
+    else:
+        grouped_by_no: Dict[int, List[Dict[str, Any]]] = {}
+        for item in peaks_data:
+            grouped_by_no.setdefault(int(item.get("No", 50)), []).append(item)
+        for no_val, items in sorted(grouped_by_no.items(), key=lambda kv: kv[0]):
+            row = _write_initial_block(ws, row, items, no_val, n_rows=1)
 
-    for no_val, items in sorted(grouped_by_no.items(), key=lambda kv: kv[0]):
-        # Row 1 of block: Peak names at col 2, 8, 14, ... (every 6 columns)
-        ws.cell(row=current_row, column=1, value=None)
-        # Row 2 of block: 'No' at col 1, then ['y0', 'xc', 'A', 'wG', 'wL', 'FWHM'] repeated
-        c_no = ws.cell(row=current_row + 1, column=1, value="No")
-        c_no.font = SUBHEADER_FONT
-        c_no.fill = SUBHEADER_FILL
-        c_no.alignment = Alignment(horizontal="center")
-        c_no.border = THIN_BORDER
-
-        for idx, pk in enumerate(items):
-            base_col = 2 + idx * 6
-            pk_name = str(pk["peak_name"])
-            c_main = ws.cell(row=current_row, column=base_col, value=pk_name)
-            c_main.font = HEADER_FONT
-            c_main.fill = HEADER_FILL
-            c_main.alignment = Alignment(horizontal="center")
-
-            sub_cols = ["y0", "xc", "A", "wG", "wL", "FWHM"]
-            for offset, sh in enumerate(sub_cols):
-                c_sub = ws.cell(row=current_row + 1, column=base_col + offset, value=sh)
-                c_sub.font = SUBHEADER_FONT
-                c_sub.fill = SUBHEADER_FILL
-                c_sub.alignment = Alignment(horizontal="center")
-                c_sub.border = THIN_BORDER
-
-        # Write data rows (Row 1 is exact fit; Rows 2..num_ratio_sets provide slight R perturbations for 2PeaksRatio)
-        has_pair = len(items) >= 2
-        n_rows_to_write = max(1, num_ratio_sets) if has_pair else 1
-
-        for r_idx in range(n_rows_to_write):
-            data_row = current_row + 2 + r_idx
-            c_num = ws.cell(row=data_row, column=1, value=int(no_val))
-            c_num.font = ARIAL_FONT
-            c_num.border = THIN_BORDER
-
-            mult = ratio_multipliers[r_idx % len(ratio_multipliers)]
-            for idx, pk in enumerate(items):
-                base_col = 2 + idx * 6
-                y0 = float(pk.get("y0", 0.0))
-                xc = float(pk["xc"])
-                A = float(pk["A"])
-                # Perturb second peak slightly in extra rows so ratio2_fitter explores multiple initial R sets
-                if r_idx > 0 and idx == 1:
-                    A = A * mult
-                wG = float(pk["wG"])
-                wL = float(pk["wL"])
-                fwhm = float(pk.get("FWHM") or calc_origin_fwhm(wG, wL))
-
-                vals = [round(y0, 5), round(xc, 5), round(A, 5), round(wG, 5), round(wL, 5), round(fwhm, 5)]
-                for offset, val in enumerate(vals):
-                    cell = ws.cell(row=data_row, column=base_col + offset, value=val)
-                    cell.font = ARIAL_FONT
-                    cell.border = THIN_BORDER
-
-        current_row += 2 + n_rows_to_write
-
-    # Auto-fit column widths
     for col_idx in range(1, ws.max_column + 1):
-        col_letter = get_column_letter(col_idx)
-        ws.column_dimensions[col_letter].width = 12
+        ws.column_dimensions[get_column_letter(col_idx)].width = 12
 
     try:
         wb.save(excel_path)
@@ -167,6 +164,24 @@ def save_initial_excel(
         fallback = root / f"{specimen_name}_initial_{ts}.xlsx"
         wb.save(fallback)
         return str(fallback)
+
+
+def append_initial_block(excel_path: str | Path, peaks: List[Dict[str, Any]], no_val: int) -> Dict[str, Any]:
+    """Append one block to an existing `_initial.xlsx` unless a block with the same peaks and No exists.
+
+    An existing block is kept as is (it may hold values edited by hand) and returned instead.
+    """
+    path = Path(excel_path)
+    names = [str(p["peak_name"]) for p in peaks]
+    for blk in read_initial_blocks(path):
+        if blk["peaks"] == names and blk["rows"] and blk["rows"][0]["No"] == int(no_val):
+            return {"appended": False, "block": blk}
+    wb = openpyxl.load_workbook(path)
+    ws = wb.worksheets[0]
+    start = ws.max_row + 2
+    _write_initial_block(ws, start, peaks, int(no_val), n_rows=1)
+    wb.save(path)
+    return {"appended": True, "block": next(b for b in read_initial_blocks(path) if b["peaks"] == names and b["rows"][0]["No"] == int(no_val))}
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -180,60 +195,75 @@ def _to_float(value: Any) -> Optional[float]:
     return f if np.isfinite(f) else None
 
 
-def read_initial_workbook(excel_path: str | Path) -> Dict[str, List[Dict[str, float]]]:
-    """Read every peak block of an Origin / Harada style `_initial.xlsx`.
+def read_initial_blocks(excel_path: str | Path) -> List[Dict[str, Any]]:
+    """Read every block of an Origin / Harada style `_initial.xlsx` in file order.
 
-    Layout (one or more blocks): row k = peak names over 6 columns each (y0, xc, A, wG, wL, FWHM),
+    Layout: row k = peak names over 6 columns each (y0, xc, A, wG, wL, FWHM),
     row k+1 = `No, y0, xc, A, wG, wL, FWHM, ...`, then one row per initial-value set.
-    Returns `{peak_name: [{"No", "y0", "xc", "A", "wG", "wL", "FWHM"}, ...]}` in file order.
+    Returns `[{"peaks": [names], "rows": [{"No": int | None, "entries": {name: {y0, xc, A, wG, wL, FWHM}}}]}]`.
     """
     path = Path(excel_path)
     if not path.exists():
         raise FileNotFoundError(f"Initial Excel file not found: {path}")
     raw = pd.read_excel(path, header=None, engine="openpyxl", dtype=object)
-    peaks: Dict[str, List[Dict[str, float]]] = {}
+
+    def _text(v: Any) -> str:
+        return str(v).strip() if v is not None and not (isinstance(v, float) and np.isnan(v)) else ""
+
+    out: List[Dict[str, Any]] = []
     n_rows, n_cols = raw.shape
     r = 0
     while r < n_rows:
-        row_vals = [str(v).strip() if v is not None and not (isinstance(v, float) and np.isnan(v)) else "" for v in raw.iloc[r]]
-        if "y0" not in row_vals or r == 0:
+        sub = [_text(v) for v in raw.iloc[r]]
+        if "y0" not in sub or r == 0:
             r += 1
             continue
-        sub = row_vals
         head = raw.iloc[r - 1].tolist()
         no_col = sub.index("No") if "No" in sub else None
-        # Peak name = nearest non-empty header cell at or left of each 'y0' column
-        blocks: List[Tuple[str, int]] = []
+        cols: List[Tuple[str, int]] = []
         for c, label in enumerate(sub):
             if label != "y0":
                 continue
             name = ""
-            for cc in range(c, -1, -1):
-                hv = head[cc]
-                if hv is not None and not (isinstance(hv, float) and np.isnan(hv)) and str(hv).strip():
-                    name = str(hv).strip()
+            for cc in range(c, -1, -1):  # nearest non-empty header cell at or left of the y0 column
+                if _text(head[cc]):
+                    name = _text(head[cc])
                     break
             if name:
-                blocks.append((name, c))
+                cols.append((name, c))
+        block = {"peaks": [n for n, _ in cols], "rows": []}
         rr = r + 1
         while rr < n_rows:
             data = raw.iloc[rr].tolist()
-            texts = [str(v).strip() if v is not None and not (isinstance(v, float) and np.isnan(v)) else "" for v in data]
+            texts = [_text(v) for v in data]
             if not any(texts) or "y0" in texts:
                 break
             no_val = _to_float(data[no_col]) if no_col is not None else None
-            for name, c in blocks:
+            entries: Dict[str, Dict[str, float]] = {}
+            for name, c in cols:
                 keys = ["y0", "xc", "A", "wG", "wL", "FWHM"]
                 vals = {k: _to_float(data[c + i]) if c + i < n_cols else None for i, k in enumerate(keys)}
                 if vals["xc"] is None or vals["A"] is None:
                     continue
-                entry = {"No": int(no_val) if no_val is not None else None}
-                entry.update({k: (v if v is not None else 0.0) for k, v in vals.items()})
-                peaks.setdefault(name, []).append(entry)
+                entries[name] = {k: (v if v is not None else 0.0) for k, v in vals.items()}
+            if entries:
+                block["rows"].append({"No": int(no_val) if no_val is not None else None, "entries": entries})
             rr += 1
+        if block["peaks"] and block["rows"]:
+            out.append(block)
         r = rr
-    if not peaks:
+    if not out:
         raise ValueError(f"初期値ブロック (No / y0 / xc / A / wG / wL / FWHM) が見つかりません: {path.name}")
+    return out
+
+
+def read_initial_workbook(excel_path: str | Path) -> Dict[str, List[Dict[str, float]]]:
+    """`{peak_name: [{"No", "y0", "xc", "A", "wG", "wL", "FWHM"}, ...]}` over all blocks, in file order."""
+    peaks: Dict[str, List[Dict[str, float]]] = {}
+    for blk in read_initial_blocks(excel_path):
+        for row in blk["rows"]:
+            for name, e in row["entries"].items():
+                peaks.setdefault(name, []).append({"No": row["No"], **e})
     return peaks
 
 

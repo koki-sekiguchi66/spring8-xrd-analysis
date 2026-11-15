@@ -166,6 +166,8 @@ export interface GroupBatchConfig {
   R_source_group?: string;
   /** Step 2 fits of this group per representative frame (num -> peaks), for re-choosing the initial frame */
   init_options?: Record<string, PeakFitParam[]>;
+  /** Frame chosen in Step 2 (initial frame for 1Peak / MultiPeaks) */
+  step2_num?: number;
   default_fit_limits?: Record<string, FitLimitConfig>;
   min_peak_separation?: number;
   suppress_before_onset?: boolean;
