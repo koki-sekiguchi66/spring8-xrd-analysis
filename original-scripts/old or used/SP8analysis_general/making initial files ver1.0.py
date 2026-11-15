@@ -1,0 +1,63 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Aug 18 11:04:12 2025
+
+@author: harad
+"""
+import os
+import openpyxl
+from pathlib import Path
+
+root_dir = Path(r"F:\修士データ\SP8\diffraction data\20251003")
+folders = os.listdir(root_dir)
+for h in range(len(folders)):
+    print(folders[h])
+    
+    # 1. 基本情報を設定
+
+    specimen_name = folders[h]
+    peaks = ["fcc111bcc110", "fcc111bct011bct110", "fcc200", "fcc220", "bcc211", "fcc311"]
+
+    # `peaks`リストの各要素(peak)を直接使ってf-stringで文字列を生成する
+    file_names = [f"{specimen_name}_{peak}_initial" for peak in peaks]
+
+    folder_path = Path(fr"{root_dir}\\{folders[h]}")
+
+    # 書き込むデータを3行分定義
+    # [0, 1, 2, ..., 18] というリストを作成し、先頭の [""] と結合する
+    row1_data = list(range(19))
+    # 2行目: A2に行番号「1」、B2からヘッダー
+    row2_data = [1, "No", "y0", "xc", "A", "wG", "wL", "FWHM", "y0", "xc", "A", "wG", "wL", "FWHM", "y0", "xc", "A", "wG", "wL", "FWHM"]
+    # 3行目: A3に行番号「2」
+    row3_data = [2]
+
+    # 2. フォルダが存在しない場合は作成
+    os.makedirs(folder_path, exist_ok=True)
+
+    # 3. ファイルを1つずつ作成してデータを書き込む
+    for file_name in file_names:
+      file_path = os.path.join(folder_path, file_name + ".xlsx")
+
+      # --- ここからが変更点 ---
+      # もし、同じ名前のファイルが存在しない場合のみ、以降の作成処理を実行
+      if not os.path.exists(file_path):
+        # 新規Excelブックを作成
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+
+        # 定義したデータを順番に書き込む
+        sheet.append(row1_data)
+        sheet.append(row2_data)
+        sheet.append(row3_data)
+
+        # ファイルを保存
+        workbook.save(file_path)
+
+        print(f"新規作成: {file_path}")
+      # もし、すでにファイルが存在する場合
+      else:
+        print(f"スキップ: {file_path} は既に存在します。")
+      # --- ここまでが変更点 ---
+
+
+    print("\n処理が完了しました。")
