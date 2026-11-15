@@ -24,6 +24,7 @@ interface Step5PhysicsAnalysisProps {
   folderPath: string;
   specimenName: string;
   batchResults: Record<string, BatchGroupResult>;
+  onPhysicsComputed?: () => void;
 }
 
 type PhysicsSubView = 'phase_fraction' | 'dislocation' | 'lattice_strain' | 'table';
@@ -34,6 +35,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
   folderPath,
   specimenName,
   batchResults,
+  onPhysicsComputed,
 }) => {
   const [activeSubView, setActiveSubView] = useState<PhysicsSubView>('phase_fraction');
   const [excelPath, setExcelPath] = useState<string>('');
@@ -86,6 +88,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         a_alpha0_nm: aAlpha0,
       });
       setResult(res);
+      onPhysicsComputed?.();
     } catch (e: any) {
       setErrorMsg(e.message || '計算エラー');
     } finally {
@@ -258,28 +261,28 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
     <div className="space-y-3">
       {/* Toolbar */}
       <Panel>
-        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-2.5">
           <SegmentedControl<PhysicsSubView>
             ariaLabel="解析ビュー"
-            size="sm"
+            size="md"
             value={activeSubView}
             onChange={setActiveSubView}
             options={[
               { value: 'phase_fraction', label: '相分率', accent: 'amber' },
               { value: 'dislocation', label: '転位密度', accent: 'sky' },
               { value: 'lattice_strain', label: '格子ひずみ', accent: 'emerald' },
-              { value: 'table', label: 'テーブル', icon: <TableIcon className="w-3.5 h-3.5" /> },
+              { value: 'table', label: 'テーブル', icon: <TableIcon className="w-4 h-4" /> },
             ]}
           />
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             {hasSessionGroups && !excelPath && (
               <StatusBadge tone="emerald" dot>
-                セッション
+                セッション読込済み
               </StatusBadge>
             )}
             <div className="flex items-center gap-1.5">
-              <div className="w-56">
+              <div className="w-60">
                 <TextInput
                   mono
                   value={excelPath}
@@ -287,17 +290,18 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
                   placeholder="output.xlsx（任意）"
                 />
               </div>
-              <Button variant="secondary" size="sm" onClick={handleBrowseExcel} title="選択">
-                <FolderOpen className="w-3.5 h-3.5" />
+              <Button variant="secondary" size="md" onClick={handleBrowseExcel} title="選択">
+                <FolderOpen className="w-4 h-4" />
               </Button>
             </div>
             <Button
+              data-guide="step5-calc"
               variant="primary"
-              size="sm"
+              size="md"
               onClick={() => handleRunAnalysis()}
               disabled={isRunning}
             >
-              <Play className="w-3 h-3 fill-current" />
+              <Play className="w-4 h-4 fill-current" />
               <span>{isRunning ? '計算中...' : '計算'}</span>
             </Button>
           </div>

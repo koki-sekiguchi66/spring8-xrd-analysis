@@ -26,19 +26,19 @@ export const Disclosure: React.FC<DisclosureProps> = ({
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="w-full h-8 px-2.5 flex items-center justify-between gap-2 text-[12px] font-medium text-[#eef0f4] hover:bg-[#15181e] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/70"
+        className="w-full h-[38px] px-3 flex items-center justify-between gap-2 text-[13px] font-medium text-[#eef0f4] hover:bg-[#15181e] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/70"
       >
-        <span className="flex items-center gap-1.5 min-w-0 truncate">
+        <span className="flex items-center gap-2 min-w-0 truncate">
           {open ? (
-            <ChevronDown className="size-3.5 text-[#858d9c] shrink-0" aria-hidden="true" />
+            <ChevronDown className="size-4 text-[#858d9c] shrink-0" aria-hidden="true" />
           ) : (
-            <ChevronRight className="size-3.5 text-[#858d9c] shrink-0" aria-hidden="true" />
+            <ChevronRight className="size-4 text-[#858d9c] shrink-0" aria-hidden="true" />
           )}
           <span className="truncate">{title}</span>
         </span>
-        {summary && <span className="text-[11px] font-mono text-[#5d6473] shrink-0">{summary}</span>}
+        {summary && <span className="text-[12px] font-mono text-[#7c8494] shrink-0">{summary}</span>}
       </button>
-      {open && <div className="p-2.5 border-t border-[#22262f] bg-[#101216]">{children}</div>}
+      {open && <div className="p-3 border-t border-[#22262f] bg-[#101216]">{children}</div>}
     </div>
   );
 };

@@ -26,6 +26,7 @@ export interface Step1PreprocessProps {
   preprocessResult: PreprocessRunResponse | null;
   setPreprocessResult: (res: PreprocessRunResponse) => void;
   onProceedStep2: () => void;
+  onFolderPickedByUser?: () => void;
 }
 
 export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
@@ -36,6 +37,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
   preprocessResult,
   setPreprocessResult,
   onProceedStep2,
+  onFolderPickedByUser,
 }) => {
   const [sampleFolder, setSampleFolder] = useState<string>('');
   const [thMin, setThMin] = useState<number>(10.2);
@@ -83,7 +85,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
 
   const handleBrowseNative = async () => {
     try {
-      const res = await apiPost<{ selected_path: string; cancelled: boolean }>(
+      const res = await apiPost<{ selected_path?: string; path?: string; cancelled?: boolean }>(
         '/api/dialog/select',
         {
           mode: 'folder',
@@ -91,12 +93,14 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
           initial_dir: folderPath || undefined,
         }
       );
-      if (!res.cancelled && res.selected_path) {
-        setFolderPath(res.selected_path);
-        const inferred = inferSpecimenFromPath(res.selected_path);
+      const picked = res.selected_path || res.path;
+      if (!res.cancelled && picked) {
+        setFolderPath(picked);
+        const inferred = inferSpecimenFromPath(picked);
         if (inferred) {
           setSpecimenName(inferred);
         }
+        onFolderPickedByUser?.();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -243,10 +247,10 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
           }
         />
         <PanelBody className="space-y-3.5">
-          <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <label htmlFor="specimen-folder-input" className="text-[11px] font-medium text-[#858d9c]">
+          <div className="space-y-4">
+            <div data-guide="folder-select" className="rounded-lg p-1 -m-1 transition-colors">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label htmlFor="specimen-folder-input" className="text-[12px] font-medium text-[#98a0ae]">
                   フォルダ
                 </label>
                 {sampleFolder && (
@@ -255,15 +259,16 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                     onClick={() => {
                       setFolderPath(sampleFolder);
                       setSpecimenName('Seki_age_2_tensile');
+                      onFolderPickedByUser?.();
                       handleRunPreprocess(sampleFolder);
                     }}
-                    className="text-[11px] font-medium text-sky-400 hover:text-sky-300 transition-colors"
+                    className="text-[12px] font-medium text-sky-400 hover:text-sky-300 transition-colors"
                   >
                     サンプル読込
                   </button>
                 )}
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex gap-2">
                 <TextInput
                   id="specimen-folder-input"
                   mono
@@ -271,14 +276,15 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                   onChange={(e) => {
                     const val = e.target.value;
                     setFolderPath(val);
+                    onFolderPickedByUser?.();
                     const inferred = inferSpecimenFromPath(val);
                     if (inferred) setSpecimenName(inferred);
                   }}
                   placeholder="D:\Data\Specimen"
                   className="flex-1"
                 />
-                <Button variant="secondary" size="sm" onClick={handleBrowseNative}>
-                  <FolderOpen className="size-3.5 text-sky-400" aria-hidden="true" />
+                <Button variant="secondary" size="md" onClick={handleBrowseNative}>
+                  <FolderOpen className="size-4 text-sky-400" aria-hidden="true" />
                   <span>選択</span>
                 </Button>
               </div>
@@ -359,50 +365,52 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
           {error && <Notice tone="error">{error}</Notice>}
 
           <Button
+            data-guide="preprocess-run"
             variant="primary"
+            size="lg"
             block
             disabled={loading}
             onClick={() => handleRunPreprocess()}
           >
             {loading ? (
               <>
-                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
                 <span>処理中...</span>
               </>
             ) : (
               <>
-                <Play className="size-3 fill-current" aria-hidden="true" />
+                <Play className="size-4 fill-current" aria-hidden="true" />
                 <span>実行</span>
               </>
             )}
           </Button>
 
           {preprocessResult && (
-            <div className="pt-3 border-t border-[#22262f] space-y-2.5">
-              <div className="grid grid-cols-3 divide-x divide-[#22262f] rounded-md bg-[#08090c] border border-[#22262f] text-center">
-                <div className="py-1.5 px-2">
-                  <div className="text-[10px] text-[#5d6473]">.tth</div>
-                  <div className="text-[13px] font-mono tabular-nums font-semibold text-sky-300 mt-0.5">
+            <div className="pt-3.5 border-t border-[#22262f] space-y-3">
+              <div className="grid grid-cols-3 divide-x divide-[#22262f] rounded-lg bg-[#08090c] border border-[#252a35] text-center">
+                <div className="py-2.5 px-2">
+                  <div className="text-[11px] text-[#7c8494]">.tth</div>
+                  <div className="text-[16px] font-mono tabular-nums font-semibold text-sky-300 mt-0.5">
                     {preprocessResult.separation.total_tth_count}
                   </div>
                 </div>
-                <div className="py-1.5 px-2">
-                  <div className="text-[10px] text-[#5d6473]">範囲</div>
-                  <div className="text-[13px] font-mono tabular-nums font-semibold text-[#eef0f4] mt-0.5">
+                <div className="py-2.5 px-2">
+                  <div className="text-[11px] text-[#7c8494]">範囲</div>
+                  <div className="text-[16px] font-mono tabular-nums font-semibold text-[#eef0f4] mt-0.5">
                     {preprocessResult.nums[0]}–{preprocessResult.nums[preprocessResult.nums.length - 1]}
                   </div>
                 </div>
-                <div className="py-1.5 px-2">
-                  <div className="text-[10px] text-[#5d6473]">補間</div>
-                  <div className="text-[13px] font-mono font-semibold text-emerald-300 mt-0.5 truncate">
+                <div className="py-2.5 px-2">
+                  <div className="text-[11px] text-[#7c8494]">補間</div>
+                  <div className="text-[16px] font-mono font-semibold text-emerald-300 mt-0.5 truncate">
                     {previewData?.method_used ?? 'PCHIP'}
                   </div>
                 </div>
               </div>
 
-              <Button variant="emerald" block onClick={onProceedStep2}>
+              <Button data-guide="step1-next" variant="emerald" size="lg" block onClick={onProceedStep2}>
                 <span>次へ: 初期値</span>
-                <ArrowRight className="size-3.5" aria-hidden="true" />
+                <ArrowRight className="size-4" aria-hidden="true" />
               </Button>
             </div>
           )}
@@ -489,6 +497,7 @@ export const Step1Preprocess: React.FC<Step1PreprocessProps> = ({
                   ? () => {
                       setFolderPath(sampleFolder);
                       setSpecimenName('Seki_age_2_tensile');
+                      onFolderPickedByUser?.();
                       handleRunPreprocess(sampleFolder);
                     }
                   : undefined

@@ -7,9 +7,9 @@ export interface PanelProps extends React.HTMLAttributes<HTMLDivElement> {
 
 const TONE_CLASSES = {
   surface:
-    'bg-[#15181e] border border-[#22262f] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.035)]',
-  inset: 'bg-[#08090c] border border-[#1f232c]',
-  chrome: 'bg-[#101216] border border-[#22262f]',
+    'bg-gradient-to-b from-[#171b22] to-[#13161c] border border-[#272c37] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05),0_8px_24px_-12px_rgba(0,0,0,0.75)]',
+  inset: 'bg-[#08090c] border border-[#21252f]',
+  chrome: 'bg-[#101216] border border-[#252a35]',
 };
 
 /** Primary machined container with subtle specular top edge and hairline borders. */
@@ -20,7 +20,7 @@ export const Panel: React.FC<PanelProps> = ({
   ...rest
 }) => {
   return (
-    <div className={cn('rounded-md', TONE_CLASSES[tone], className)} {...rest}>
+    <div className={cn('rounded-lg', TONE_CLASSES[tone], className)} {...rest}>
       {children}
     </div>
   );
@@ -43,22 +43,22 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
   return (
     <div
       className={cn(
-        'px-3.5 py-2 border-b border-[#22262f] flex flex-wrap items-center justify-between gap-2',
+        'px-4 py-2.5 border-b border-[#242934] flex flex-wrap items-center justify-between gap-2 bg-[#161a21]/60 rounded-t-lg',
         className
       )}
       {...rest}
     >
-      <div className="flex items-baseline gap-2 min-w-0">
-        <div className="text-[12px] font-semibold tracking-tight text-[#eef0f4] truncate">
+      <div className="flex items-baseline gap-2.5 min-w-0">
+        <div className="text-[13px] font-semibold tracking-tight text-[#eef0f4] truncate">
           {title}
         </div>
         {subtitle && (
-          <div className="text-[11px] font-mono tabular-nums text-[#5d6473] truncate">
+          <div className="text-[11px] font-mono tabular-nums text-[#7c8494] truncate">
             {subtitle}
           </div>
         )}
       </div>
-      {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
+      {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </div>
   );
 };
@@ -70,7 +70,7 @@ export const PanelBody: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   ...rest
 }) => {
   return (
-    <div className={cn('p-3.5', className)} {...rest}>
+    <div className={cn('p-4', className)} {...rest}>
       {children}
     </div>
   );

@@ -515,11 +515,11 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
     <div className="space-y-3">
       {/* Toolbar */}
       <Panel>
-        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <SegmentedControl<SubView>
               ariaLabel="表示切替"
-              size="sm"
+              size="md"
               value={activeSubView}
               onChange={setActiveSubView}
               options={[
@@ -538,7 +538,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
             />
 
             {groupList.length > 1 && (
-              <div className="flex items-center gap-1 border-l border-[#22262f] pl-2">
+              <div className="flex items-center gap-1.5 border-l border-[#22262f] pl-2.5">
                 {groupList.map((g) => {
                   const count = g.outlier_nums?.length || 0;
                   return (
@@ -547,15 +547,15 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                       type="button"
                       onClick={() => setSelectedGid(g.group_id)}
                       className={cn(
-                        'h-6 px-2 rounded text-[11px] font-medium flex items-center gap-1.5 border transition-colors whitespace-nowrap',
+                        'h-8 px-2.5 rounded-md text-[12px] font-medium flex items-center gap-1.5 border transition-colors whitespace-nowrap',
                         g.group_id === selectedGid
-                          ? 'bg-[#1c2028] text-[#eef0f4] border-sky-500/40'
+                          ? 'bg-[#1c2028] text-[#eef0f4] border-sky-500/45'
                           : 'bg-transparent text-[#858d9c] border-transparent hover:text-[#eef0f4] hover:bg-[#15181e]'
                       )}
                     >
                       <span className="truncate max-w-[140px]">{g.sheet_name}</span>
                       {count > 0 && (
-                        <span className="text-[10px] font-mono tabular-nums text-amber-300">
+                        <span className="text-[11px] font-mono tabular-nums text-amber-300">
                           {count}
                         </span>
                       )}
@@ -566,18 +566,19 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <StatusBadge tone={outlierCountTotal > 0 ? 'amber' : 'emerald'} dot mono>
               外れ値 {outlierCountTotal}
             </StatusBadge>
             <Button
+              data-guide="step4-next"
               variant="emerald"
-              size="sm"
+              size="md"
               onClick={onProceedStep5}
               disabled={groupList.length === 0}
             >
               <span>次へ: 物理量</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="w-4 h-4" />
             </Button>
           </div>
         </div>

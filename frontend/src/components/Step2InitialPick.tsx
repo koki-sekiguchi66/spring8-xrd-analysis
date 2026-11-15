@@ -32,6 +32,7 @@ export interface Step2InitialPickProps {
   initialData: InitialAutoDetectResponse | null;
   setInitialData: React.Dispatch<React.SetStateAction<InitialAutoDetectResponse | null>>;
   onConfirmInitialAndProceed: (batchConfigs: GroupBatchConfig[], savedExcelPath: string) => void;
+  onSubScreenChange?: (screen: Step2SubScreen) => void;
 }
 
 type Step2SubScreen = 'overview' | 'detail';
@@ -42,8 +43,16 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
   initialData,
   setInitialData,
   onConfirmInitialAndProceed,
+  onSubScreenChange,
 }) => {
-  const [subScreen, setSubScreen] = useState<Step2SubScreen>('overview');
+  const [subScreen, setSubScreenState] = useState<Step2SubScreen>('overview');
+  const setSubScreen = useCallback(
+    (next: Step2SubScreen) => {
+      setSubScreenState(next);
+      onSubScreenChange?.(next);
+    },
+    [onSubScreenChange]
+  );
   const [focusedGroupId, setFocusedGroupId] = useState<string>('fcc200');
 
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
@@ -397,81 +406,146 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Compact Toolbar */}
+      {/* Prominent Two-Mode View Tabs & Action Toolbar */}
       <Panel>
-        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <SegmentedControl
-              ariaLabel="表示切替"
-              size="sm"
-              value={subScreen}
-              onChange={setSubScreen}
-              options={[
-                {
-                  value: 'overview',
-                  label: '全体',
-                  icon: <Layers className="size-3.5" aria-hidden="true" />,
-                  accent: 'sky',
-                },
-                {
-                  value: 'detail',
-                  label: '詳細 Fit',
-                  icon: <ZoomIn className="size-3.5" aria-hidden="true" />,
-                  accent: 'sky',
-                },
-              ]}
-            />
+        <div className="p-3.5 space-y-3">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+            {/* Emphasized Sub-Screen Tab Switcher */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 flex-1">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={subScreen === 'overview'}
+                onClick={() => setSubScreen('overview')}
+                className={`relative rounded-lg px-4 py-2.5 border text-left transition-all flex items-start gap-3 ${
+                  subScreen === 'overview'
+                    ? 'bg-gradient-to-b from-[#1e2634] to-[#161c26] border-sky-400/75 shadow-[0_0_20px_-6px_rgba(56,189,248,0.45),inset_0_1px_0_0_rgba(255,255,255,0.08)]'
+                    : 'bg-[#0b0d12] border-[#252a36] hover:border-[#373f52] hover:bg-[#141820]'
+                }`}
+              >
+                <div
+                  className={`mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0 border ${
+                    subScreen === 'overview'
+                      ? 'bg-sky-500/20 border-sky-400/50 text-sky-300'
+                      : 'bg-[#151820] border-[#272c38] text-[#858d9c]'
+                  }`}
+                >
+                  <Layers className="size-4" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-[14px] font-semibold tracking-tight ${
+                        subScreen === 'overview' ? 'text-[#eef0f4]' : 'text-[#cfd4de]'
+                      }`}
+                    >
+                      全体プロファイル・ピーク群一覧
+                    </span>
+                    {initialData && (
+                      <span className="px-1.5 py-0.5 rounded bg-[#1d222c] border border-[#2d3444] text-[11px] font-mono tabular-nums text-[#98a0ae]">
+                        {initialData.candidate_groups.length} 群
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-[#858d9c] truncate">
+                    全体 2θ グラフと検出ピークの採否・代表フレーム確認
+                  </div>
+                </div>
+              </button>
 
-            <SegmentedControl
-              ariaLabel="選出モード"
-              size="sm"
-              value={mode}
-              onChange={(m) => {
-                setMode(m);
-                if (m === 'auto') runDetection('auto');
-              }}
-              options={[
-                { value: 'auto', label: '自動', accent: 'neutral' },
-                { value: 'manual', label: '手動', accent: 'amber' },
-              ]}
-            />
+              <button
+                type="button"
+                role="tab"
+                data-guide="step2-detail-tab"
+                aria-selected={subScreen === 'detail'}
+                onClick={() => setSubScreen('detail')}
+                className={`relative rounded-lg px-4 py-2.5 border text-left transition-all flex items-start gap-3 ${
+                  subScreen === 'detail'
+                    ? 'bg-gradient-to-b from-[#17283a] to-[#111c29] border-sky-400 shadow-[0_0_26px_-4px_rgba(56,189,248,0.55),inset_0_1px_0_0_rgba(125,211,252,0.2)]'
+                    : 'bg-gradient-to-b from-[#141d28] to-[#0f141c] border-sky-500/45 hover:border-sky-400/85 hover:shadow-[0_0_18px_-6px_rgba(56,189,248,0.35)]'
+                }`}
+              >
+                <div
+                  className={`mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0 border ${
+                    subScreen === 'detail'
+                      ? 'bg-sky-400 text-zinc-950 border-sky-300 shadow-[0_0_12px_rgba(56,189,248,0.5)]'
+                      : 'bg-sky-500/20 border-sky-400/50 text-sky-300'
+                  }`}
+                >
+                  <ZoomIn className="size-4" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center flex-wrap gap-2">
+                    <span className="text-[14px] font-semibold tracking-tight text-[#eef0f4]">
+                      詳細 Fit（ピーク別フィッティング確認）
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-400/50 text-[11px] font-semibold text-sky-200 whitespace-nowrap">
+                      波形・残差・微調整
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-[#98a0ae] truncate">
+                    {focusedGroup
+                      ? `選択中: ${focusedGroup.peaks.join(' + ')} · Voigt 分離曲線と 2θ 範囲検証`
+                      : '実測点・Voigt 合成曲線・個別ピーク・残差・FWHM 検証'}
+                  </div>
+                </div>
+              </button>
+            </div>
 
-            {mode === 'manual' && (
-              <div className="flex items-center gap-1.5">
-                <TextInput
-                  aria-label="ファイル番号"
-                  mono
-                  value={manualInput}
-                  onChange={(e) => setManualInput(e.target.value)}
-                  placeholder="50, 900"
-                  className="w-28 tabular-nums"
-                />
-                <Button variant="amber" size="xs" onClick={handleManualRun}>
-                  <Plus className="size-3" aria-hidden="true" />
-                  <span>探索</span>
-                </Button>
-              </div>
-            )}
+            {/* Secondary Mode + Primary Next Button */}
+            <div className="flex flex-wrap items-center justify-end gap-2.5 shrink-0">
+              <SegmentedControl
+                ariaLabel="選出モード"
+                size="md"
+                value={mode}
+                onChange={(m) => {
+                  setMode(m);
+                  if (m === 'auto') runDetection('auto');
+                }}
+                options={[
+                  { value: 'auto', label: '自動検出', accent: 'neutral' },
+                  { value: 'manual', label: '手動番号', accent: 'amber' },
+                ]}
+              />
 
-            {loading && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-sky-300">
-                <RefreshCw className="size-3 animate-spin" aria-hidden="true" />
-                <span>探索中</span>
-              </span>
-            )}
+              {mode === 'manual' && (
+                <div className="flex items-center gap-1.5">
+                  <TextInput
+                    aria-label="ファイル番号"
+                    mono
+                    value={manualInput}
+                    onChange={(e) => setManualInput(e.target.value)}
+                    placeholder="50, 900"
+                    className="w-28 tabular-nums"
+                  />
+                  <Button variant="amber" size="sm" onClick={handleManualRun}>
+                    <Plus className="size-3.5" aria-hidden="true" />
+                    <span>探索</span>
+                  </Button>
+                </div>
+              )}
+
+              {loading && (
+                <span className="inline-flex items-center gap-1.5 text-[12px] font-mono text-sky-300 px-2">
+                  <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                  <span>探索中...</span>
+                </span>
+              )}
+
+              <Button
+                data-guide="step2-save-next"
+                variant="emerald"
+                size="md"
+                disabled={savingExcel || !initialData}
+                onClick={handleSaveAndProceed}
+                title={`${specimenName || 'specimen'}_initial.xlsx`}
+              >
+                <FileSpreadsheet className="size-4" aria-hidden="true" />
+                <span>{savingExcel ? '保存中...' : '保存して次へ'}</span>
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
           </div>
-
-          <Button
-            variant="emerald"
-            size="sm"
-            disabled={savingExcel || !initialData}
-            onClick={handleSaveAndProceed}
-            title={`${specimenName || 'specimen'}_initial.xlsx`}
-          >
-            <FileSpreadsheet className="size-3.5" aria-hidden="true" />
-            <span>{savingExcel ? '保存中...' : '保存して次へ'}</span>
-            <ArrowRight className="size-3.5" aria-hidden="true" />
-          </Button>
         </div>
       </Panel>
 
@@ -520,7 +594,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
             />
           </PlotFrame>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
             {initialData.candidate_groups.map((group) => {
               const activeFit = group.fits_by_num[String(group.selected_num)];
               const isMulti = group.category === 'multi_pair';
@@ -528,66 +602,52 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
               return (
                 <div
                   key={group.group_id}
-                  className={`rounded-md border p-3 flex flex-col justify-between gap-2.5 transition-colors shadow-[inset_0_1px_0_0_rgba(255,255,255,0.03)] ${
+                  className={`rounded-lg border p-4 flex flex-col justify-between gap-3 transition-all shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] ${
                     group.selected
                       ? isMulti
-                        ? 'bg-[#15181e] border-amber-500/40'
-                        : 'bg-[#15181e] border-sky-500/40'
+                        ? 'bg-gradient-to-b from-[#1a1917] to-[#14151a] border-amber-500/45 shadow-[0_8px_20px_-10px_rgba(245,158,11,0.22)]'
+                        : 'bg-gradient-to-b from-[#161b23] to-[#13161c] border-sky-500/45 shadow-[0_8px_20px_-10px_rgba(56,189,248,0.22)]'
                       : 'bg-[#101216] border-[#22262f] opacity-55'
                   }`}
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <button
                         type="button"
                         onClick={() =>
                           handleToggleGroupSelected(group.group_id, !group.selected)
                         }
-                        className="flex items-center gap-2 text-left min-w-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/60 rounded"
+                        className="flex items-center gap-2.5 text-left min-w-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/60 rounded"
                       >
                         {group.selected ? (
-                          <CheckSquare className="size-3.5 text-sky-400 shrink-0" aria-hidden="true" />
+                          <CheckSquare className="size-4 text-sky-400 shrink-0" aria-hidden="true" />
                         ) : (
-                          <Square className="size-3.5 text-[#5d6473] shrink-0" aria-hidden="true" />
+                          <Square className="size-4 text-[#5d6473] shrink-0" aria-hidden="true" />
                         )}
-                        <span className="text-[12px] font-semibold font-mono text-[#eef0f4] truncate">
+                        <span className="text-[14px] font-semibold font-mono text-[#eef0f4] truncate">
                           {group.peaks.join(' + ')}
                         </span>
                       </button>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {activeFit && !activeFit.error && (
-                          <StatusBadge
-                            tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
-                            mono
-                          >
-                            {fmtFixed(activeFit.r_squared, 4)}
-                          </StatusBadge>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFocusedGroupId(group.group_id);
-                            setSubScreen('detail');
-                          }}
-                          title="詳細調整"
-                          className="h-5 px-1.5 rounded bg-[#08090c] border border-[#22262f] hover:border-[#303644] text-[10px] text-[#858d9c] hover:text-[#eef0f4] transition-colors flex items-center gap-1"
+                      {activeFit && !activeFit.error && (
+                        <StatusBadge
+                          tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'neutral'}
+                          mono
                         >
-                          <ZoomIn className="size-3" />
-                          <span>調整</span>
-                        </button>
-                      </div>
+                          R² {fmtFixed(activeFit.r_squared, 4)}
+                        </StatusBadge>
+                      )}
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-[#08090c] border border-[#22262f]">
-                      <span className="text-[10px] font-mono text-[#5d6473]">FRAME</span>
-                      <div className="flex items-center gap-1">
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md bg-[#08090c] border border-[#22262f]">
+                      <span className="text-[11px] font-mono text-[#7c8494]">FRAME</span>
+                      <div className="flex items-center gap-1.5">
                         {initialData.selected_nums.map((numOpt) => (
                           <button
                             key={numOpt}
                             type="button"
                             onClick={() => handleChangeGroupNum(group.group_id, numOpt)}
-                            className={`h-5 px-1.5 rounded text-[10px] font-mono tabular-nums transition-colors ${
+                            className={`h-6 px-2 rounded text-[11px] font-mono tabular-nums transition-colors ${
                               group.selected_num === numOpt
                                 ? 'bg-sky-500 text-zinc-950 font-semibold'
                                 : 'bg-[#15181e] text-[#858d9c] hover:text-[#eef0f4]'
@@ -601,7 +661,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                     </div>
 
                     {activeFit && activeFit.peaks && (
-                      <div className="space-y-1 px-2 py-1.5 rounded bg-[#08090c] border border-[#22262f] font-mono text-[11px] tabular-nums">
+                      <div className="space-y-1.5 px-2.5 py-2 rounded-md bg-[#08090c] border border-[#22262f] font-mono text-[12px] tabular-nums">
                         {activeFit.peaks.map((pk) => {
                           const isGamma = pk.peak_name.startsWith('fcc');
                           return (
@@ -616,7 +676,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                               >
                                 {pk.peak_name}
                               </span>
-                              <span className="text-[#858d9c]">
+                              <span className="text-[#98a0ae]">
                                 {fmtFixed(pk.xc, 3)}° · A {fmtFixed(pk.A, 0)} · W {fmtFixed(pk.FWHM, 4)}
                               </span>
                             </div>
@@ -625,6 +685,21 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                       </div>
                     )}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFocusedGroupId(group.group_id);
+                      setSubScreen('detail');
+                    }}
+                    className="w-full h-8 px-3 rounded-md bg-sky-500/12 border border-sky-500/40 hover:bg-sky-500/22 hover:border-sky-400/75 text-[12px] font-semibold text-sky-200 transition-all flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <ZoomIn className="size-3.5 text-sky-300" />
+                      <span>詳細フィッティング・波形確認</span>
+                    </span>
+                    <ArrowRight className="size-3.5 text-sky-300" />
+                  </button>
                 </div>
               );
             })}
@@ -693,36 +768,47 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                 <>
                   <PanelHeader
                     title={focusedGroup.peaks.join(' + ')}
-                    subtitle={`#${focusedGroup.selected_num}`}
+                    subtitle={`代表フレーム #${focusedGroup.selected_num}${activeFit && !activeFit.error ? ` · R² ${fmtFixed(activeFit.r_squared, 4)}` : ''}`}
                     actions={
-                      <div className="flex items-center gap-1 bg-[#08090c] border border-[#22262f] rounded-md p-0.5">
-                        {initialData.selected_nums.map((numOpt) => (
-                          <button
-                            key={numOpt}
-                            type="button"
-                            onClick={() => handleChangeGroupNum(focusedGroup.group_id, numOpt)}
-                            className={`h-6 px-2.5 rounded text-xs font-mono tabular-nums transition-colors ${
-                              focusedGroup.selected_num === numOpt
-                                ? 'bg-sky-500 text-zinc-950 font-semibold'
-                                : 'text-[#9ca3b0] hover:text-[#eceef2]'
-                            }`}
+                      <div className="flex items-center gap-2">
+                        {activeFit && !activeFit.error && (
+                          <StatusBadge
+                            tone={activeFit.r_squared >= 0.99 ? 'emerald' : 'amber'}
+                            dot
+                            mono
                           >
-                            #{numOpt}
-                          </button>
-                        ))}
+                            R² {fmtFixed(activeFit.r_squared, 4)}
+                          </StatusBadge>
+                        )}
+                        <div className="flex items-center gap-1 bg-[#08090c] border border-[#252a35] rounded-md p-0.5">
+                          {initialData.selected_nums.map((numOpt) => (
+                            <button
+                              key={numOpt}
+                              type="button"
+                              onClick={() => handleChangeGroupNum(focusedGroup.group_id, numOpt)}
+                              className={`h-7 px-2.5 rounded text-[12px] font-mono tabular-nums transition-colors ${
+                                focusedGroup.selected_num === numOpt
+                                  ? 'bg-sky-500 text-zinc-950 font-semibold'
+                                  : 'text-[#9ca3b0] hover:text-[#eceef2]'
+                              }`}
+                            >
+                              #{numOpt}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     }
                   />
                   <PanelBody className="space-y-4">
-                    <div className="rounded-md bg-[#0a0b0e] border border-[#23262e] p-2">
+                    <div className="rounded-lg bg-[#08090c] border border-[#252a36] p-2">
                       <PlotlyChart
                         data={focusedTraces}
                         layout={{
-                          margin: { l: 54, r: 16, t: 14, b: 40 },
+                          margin: { l: 56, r: 16, t: 14, b: 42 },
                           xaxis: { title: '2θ (deg)' },
                           yaxis: { title: 'Intensity (a.u.)' },
                         }}
-                        className="w-full h-[340px]"
+                        className="w-full h-[360px]"
                         onRangeSelect={(rMin, rMax) => {
                           setRangeEdits((prev) => ({
                             ...prev,
@@ -737,31 +823,31 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                     </div>
 
                     {activeFit && activeFit.peaks && (
-                      <div className="overflow-x-auto rounded-md bg-[#0a0b0e] border border-[#23262e]">
-                        <table className="w-full text-left border-collapse text-xs">
+                      <div className="overflow-x-auto rounded-lg bg-[#08090c] border border-[#252a36]">
+                        <table className="w-full text-left border-collapse text-[13px]">
                           <thead>
-                            <tr className="border-b border-[#23262e] bg-[#121418] text-[#9ca3b0]">
-                              <th className="py-2 px-3 font-medium">Peak</th>
-                              <th className="py-2 px-3 font-medium">No</th>
-                              <th className="py-2 px-3 font-medium text-right">xc (2θ°)</th>
-                              <th className="py-2 px-3 font-medium text-right">面積強度 A</th>
-                              <th className="py-2 px-3 font-medium text-right">wG (°)</th>
-                              <th className="py-2 px-3 font-medium text-right">wL (°)</th>
-                              <th className="py-2 px-3 font-medium text-right">FWHM (°)</th>
+                            <tr className="border-b border-[#252a36] bg-[#13161d] text-[#98a0ae] text-[12px]">
+                              <th className="py-2.5 px-3.5 font-medium">Peak</th>
+                              <th className="py-2.5 px-3.5 font-medium">No</th>
+                              <th className="py-2.5 px-3.5 font-medium text-right">xc (2θ°)</th>
+                              <th className="py-2.5 px-3.5 font-medium text-right">面積強度 A</th>
+                              <th className="py-2.5 px-3.5 font-medium text-right">wG (°)</th>
+                              <th className="py-2.5 px-3.5 font-medium text-right">wL (°)</th>
+                              <th className="py-2.5 px-3.5 font-medium text-right">FWHM (°)</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-[#1e2129] font-mono tabular-nums">
+                          <tbody className="divide-y divide-[#1d212b] font-mono tabular-nums">
                             {activeFit.peaks.map((pk, idx) => {
                               const isGamma = pk.peak_name.startsWith('fcc');
                               return (
-                                <tr key={pk.peak_name} className="hover:bg-[#16181d]">
-                                  <td className="py-2 px-3 font-semibold">
+                                <tr key={pk.peak_name} className="hover:bg-[#161a22]">
+                                  <td className="py-2.5 px-3.5 font-semibold">
                                     <span className={isGamma ? 'text-sky-300' : 'text-amber-300'}>
                                       {pk.peak_name}
                                     </span>
                                   </td>
-                                  <td className="py-2 px-3 text-[#9ca3b0]">{pk.No}</td>
-                                  <td className="py-1.5 px-3 text-right">
+                                  <td className="py-2.5 px-3.5 text-[#9ca3b0]">{pk.No}</td>
+                                  <td className="py-2 px-3.5 text-right">
                                     <input
                                       type="number"
                                       step="0.005"
@@ -780,19 +866,19 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                                           },
                                         }));
                                       }}
-                                      className="w-24 h-7 bg-[#16181d] border border-[#2a2e38] rounded px-2 text-right text-xs font-mono tabular-nums text-[#eceef2] focus:border-sky-500/70 focus:outline-none"
+                                      className="w-28 h-8 bg-[#151820] border border-[#2d3342] rounded-md px-2.5 text-right text-[13px] font-mono tabular-nums text-[#eef0f4] focus:border-sky-400 focus:outline-none"
                                     />
                                   </td>
-                                  <td className="py-2 px-3 text-right text-[#eceef2]">
+                                  <td className="py-2.5 px-3.5 text-right text-[#eef0f4]">
                                     {fmtFixed(pk.A, 2)}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                                  <td className="py-2.5 px-3.5 text-right text-[#9ca3b0]">
                                     {fmtFixed(pk.wG, 5)}
                                   </td>
-                                  <td className="py-2 px-3 text-right text-[#9ca3b0]">
+                                  <td className="py-2.5 px-3.5 text-right text-[#9ca3b0]">
                                     {fmtFixed(pk.wL, 5)}
                                   </td>
-                                  <td className="py-2 px-3 text-right font-semibold text-emerald-300">
+                                  <td className="py-2.5 px-3.5 text-right font-semibold text-emerald-300">
                                     {fmtFixed(pk.FWHM, 5)}
                                   </td>
                                 </tr>
@@ -804,8 +890,8 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                     )}
 
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-medium text-[#9ca3b0]">2θ 範囲</span>
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="text-[12px] font-medium text-[#9ca3b0]">2θ 範囲</span>
                         <UnitNumberInput
                           step="0.05"
                           unit="deg"
@@ -819,7 +905,7 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                               },
                             }))
                           }
-                          className="w-28"
+                          className="w-32"
                         />
                         <span className="text-xs text-[#636b78]">–</span>
                         <UnitNumberInput
@@ -835,18 +921,21 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
                               },
                             }))
                           }
-                          className="w-28"
+                          className="w-32"
                         />
+                        <span className="text-[12px] text-[#7c8494]">
+                          グラフ上ドラッグで範囲指定可
+                        </span>
                       </div>
 
                       <Button
                         variant="primary"
-                        size="sm"
+                        size="md"
                         disabled={refittingGroupId === focusedGroup.group_id}
                         onClick={() => handleRefitGroup(focusedGroup)}
                       >
                         <RefreshCw
-                          className={`size-3.5 ${
+                          className={`size-4 ${
                             refittingGroupId === focusedGroup.group_id ? 'animate-spin' : ''
                           }`}
                           aria-hidden="true"

@@ -38,7 +38,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 h-5 px-2 rounded border text-[11px] font-medium whitespace-nowrap shrink-0 tabular-nums',
+        'inline-flex items-center gap-1.5 h-6 px-2.5 rounded border text-[12px] font-medium whitespace-nowrap shrink-0 tabular-nums',
         BADGE_STYLES[tone],
         mono && 'font-mono',
         className

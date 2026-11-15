@@ -210,35 +210,58 @@ export const VideoUtilityTab: React.FC = () => {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-      {/* Left Extraction Controls */}
-      <Panel className="lg:col-span-5">
-        <PanelHeader title="フレーム抽出" />
-        <PanelBody className="space-y-3.5">
-          <div>
-            <FieldLabel>入力</FieldLabel>
-            <SegmentedControl
-              fullWidth
-              size="sm"
-              ariaLabel="入力モード"
-              value={mode}
-              onChange={handleSelectMode}
-              options={[
-                {
-                  value: 'single',
-                  label: '単一ファイル',
-                  icon: <FileVideo className="size-3.5" aria-hidden="true" />,
-                  accent: 'amber',
-                },
-                {
-                  value: 'folder',
-                  label: 'フォルダ一括',
-                  icon: <FolderOpen className="size-3.5" aria-hidden="true" />,
-                  accent: 'amber',
-                },
-              ]}
-            />
+    <div className="space-y-4">
+      {/* Mode Context Header Strip */}
+      <div className="rounded-lg bg-gradient-to-r from-amber-500/15 via-[#171a22] to-[#13161c] border border-amber-500/40 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-[inset_0_1px_0_0_rgba(245,158,11,0.18)]">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-400/50 flex items-center justify-center shrink-0">
+            <FileVideo className="w-5 h-5 text-amber-300" aria-hidden="true" />
           </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[14px] font-bold tracking-tight text-[#eef0f4]">
+                DIC 動画フレーム抽出モード
+              </span>
+              <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-[11px] font-semibold text-amber-200">
+                画像相関法 連番切り出し
+              </span>
+            </div>
+            <div className="text-[12px] text-[#98a0ae] truncate mt-0.5">
+              引張試験動画（MP4 / AVI / MOV）から指定秒間隔で連番静止画を抽出します
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start" data-guide="dic-panel">
+        {/* Left Extraction Controls */}
+        <Panel className="lg:col-span-5">
+          <PanelHeader title="フレーム抽出設定" />
+          <PanelBody className="space-y-4">
+            <div>
+              <FieldLabel>入力種別</FieldLabel>
+              <SegmentedControl
+                fullWidth
+                size="md"
+                ariaLabel="入力モード"
+                value={mode}
+                onChange={handleSelectMode}
+                options={[
+                  {
+                    value: 'single',
+                    label: '単一動画ファイル',
+                    icon: <FileVideo className="size-4" aria-hidden="true" />,
+                    accent: 'amber',
+                  },
+                  {
+                    value: 'folder',
+                    label: 'フォルダ一括抽出',
+                    icon: <FolderOpen className="size-4" aria-hidden="true" />,
+                    accent: 'amber',
+                  },
+                ]}
+              />
+            </div>
 
           <div>
             <div className="flex items-center justify-between gap-2 mb-1">
@@ -386,19 +409,20 @@ export const VideoUtilityTab: React.FC = () => {
 
           <Button
             variant="amber"
+            size="lg"
             block
             onClick={handleRunExport}
             disabled={runningExport || !targetPath.trim()}
           >
             {runningExport ? (
               <>
-                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
                 <span className="tabular-nums">{fmtFixed(progressPct, 1)}%</span>
               </>
             ) : (
               <>
-                <Play className="size-3 fill-current" aria-hidden="true" />
-                <span>抽出実行</span>
+                <Play className="size-4 fill-current" aria-hidden="true" />
+                <span>フレーム抽出を実行</span>
               </>
             )}
           </Button>
@@ -528,6 +552,7 @@ export const VideoUtilityTab: React.FC = () => {
             )}
           </PanelBody>
         </Panel>
+      </div>
       </div>
     </div>
   );

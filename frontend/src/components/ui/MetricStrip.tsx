@@ -34,24 +34,24 @@ export const MetricCell: React.FC<MetricCellProps> = ({
   className,
 }) => {
   return (
-    <div className={cn('px-3.5 py-2.5 min-w-0', className)}>
-      <div className="flex items-center gap-1.5 text-[11px] text-[#858d9c] truncate">
-        <span className={cn('w-1 h-2.5 rounded-full shrink-0', TICK_TONES[tone])} />
-        <span className="truncate">{label}</span>
+    <div className={cn('px-4 py-3 min-w-0', className)}>
+      <div className="flex items-center gap-2 text-[12px] text-[#98a0ae] truncate">
+        <span className={cn('w-1.5 h-3.5 rounded-full shrink-0', TICK_TONES[tone])} />
+        <span className="truncate font-medium">{label}</span>
       </div>
-      <div className="mt-1 flex items-baseline gap-1.5 pl-2.5">
+      <div className="mt-1.5 flex items-baseline gap-1.5 pl-3">
         <span
           className={cn(
-            'text-[18px] leading-tight font-semibold font-mono tabular-nums',
+            'text-[22px] leading-tight font-semibold font-mono tabular-nums',
             VALUE_TONES[tone]
           )}
         >
           {value}
         </span>
-        {unit && <span className="text-[11px] font-mono text-[#5d6473]">{unit}</span>}
+        {unit && <span className="text-[12px] font-mono text-[#7c8494]">{unit}</span>}
       </div>
       {meta && (
-        <div className="mt-0.5 pl-2.5 text-[10px] font-mono tabular-nums text-[#5d6473] truncate">
+        <div className="mt-1 pl-3 text-[11px] font-mono tabular-nums text-[#7c8494] truncate">
           {meta}
         </div>
       )}

@@ -330,66 +330,67 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Compact Action & View Toolbar */}
+      {/* Action & View Toolbar */}
       <Panel>
-        <div className="px-3.5 py-2 flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex flex-wrap items-center gap-2.5">
+        <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <SegmentedControl
               ariaLabel="表示切替"
-              size="sm"
+              size="md"
               value={subScreen}
               onChange={setSubScreen}
               options={[
                 {
                   value: 'config',
                   label: '設定',
-                  icon: <Sliders className="size-3.5" aria-hidden="true" />,
+                  icon: <Sliders className="size-4" aria-hidden="true" />,
                   accent: 'sky',
                 },
                 {
                   value: 'monitor',
                   label: 'モニター',
-                  icon: <LineChart className="size-3.5" aria-hidden="true" />,
+                  icon: <LineChart className="size-4" aria-hidden="true" />,
                   accent: 'sky',
                 },
               ]}
             />
 
             {savedOutputPath ? (
-              <span className="text-[11px] font-mono text-emerald-300 truncate max-w-md">
+              <span className="text-[12px] font-mono text-emerald-300 truncate max-w-md">
                 {savedOutputPath}
               </span>
             ) : initialExcelPath ? (
-              <span className="text-[11px] font-mono text-[#5d6473] truncate max-w-md">
+              <span className="text-[12px] font-mono text-[#7c8494] truncate max-w-md">
                 {initialExcelPath}
               </span>
             ) : null}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Button
+              data-guide="step3-run"
               variant="primary"
-              size="sm"
+              size="md"
               disabled={running}
               onClick={handleStartBatchRun}
             >
               {running ? (
                 <>
-                  <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+                  <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
                   <span>実行中...</span>
                 </>
               ) : (
                 <>
-                  <Play className="size-3 fill-current" aria-hidden="true" />
+                  <Play className="size-4 fill-current" aria-hidden="true" />
                   <span>一括実行 ({batchConfigs.length})</span>
                 </>
               )}
             </Button>
 
             {completedAll && (
-              <Button variant="emerald" size="sm" onClick={onProceedStep4}>
+              <Button data-guide="step3-next" variant="emerald" size="md" onClick={onProceedStep4}>
                 <span>次へ: 検証</span>
-                <ArrowRight className="size-3.5" aria-hidden="true" />
+                <ArrowRight className="size-4" aria-hidden="true" />
               </Button>
             )}
           </div>
