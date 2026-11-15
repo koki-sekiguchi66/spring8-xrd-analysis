@@ -65,6 +65,8 @@ class Ratio2Fitter(BaseFitter):
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 200.0,
         max_attempts: int = 10,
+        fit_y0: bool = False,
+        y0_init: float = 0.0,
         **_ignored: Any,
     ) -> None:
         if len(peaks) < 2:
@@ -85,6 +87,8 @@ class Ratio2Fitter(BaseFitter):
             update_list=update_list,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
+            fit_y0=fit_y0,
+            y0_init=y0_init,
         )
 
         self.dimt_onset_num = int(dimt_onset_num)
@@ -167,6 +171,7 @@ class Ratio2Fitter(BaseFitter):
         # ver10: amplitude ratio fixed
         pars["v2_amplitude"].set(expr=f"v1_amplitude * {float(R):.10g}")
 
+        mod, pars = self.attach_y0(mod, pars, In)
         out = mod.fit(In, pars, x=th, method="leastsq")
         comps = out.eval_components(x=th)
         residual_mean = float(np.sqrt(np.mean(out.residual ** 2)))
@@ -194,6 +199,7 @@ class Ratio2Fitter(BaseFitter):
 
         # ver10: carry only `params_to_update`; the other parameters keep their previous values
         self.prev_integral = self.current_integral
+        y0_val = self.carry_y0(out)
         for nm in PARAM_NAMES:
             if nm in self.params_to_update:
                 self.prev_params[nm] = [best_pars[f"v{r}_{nm}"] for r in (1, 2)]
@@ -214,13 +220,24 @@ class Ratio2Fitter(BaseFitter):
             relative_residual=relative_residual,
             attempts=attempt,
             is_outlier=bool(residual_mean >= self.residual_limit),
-            row_data=self.build_row_dict(num, best_pars, residual=residual_mean),
+            row_data=self.build_row_dict(num, best_pars, residual=residual_mean, y0=y0_val),
             x=th.tolist(),
             y_obs=In.tolist(),
             y_fit=out.best_fit.tolist(),
             components={self.peaks[r - 1]: comps.get(f"v{r}_", np.zeros_like(th)).tolist() for r in (1, 2)},
         )
         return payload, residual_mean
+
+    def refit_frame(self, file_index: int, R: Optional[float] = None) -> FitStepPayload:
+        """Step 4 repair with the fixed ratio R (the best R of the run) and the ver10 update rule."""
+        num = self.files[file_index][0]
+        if self.initial_ep_region < num < self.end_ep_region:
+            self.params_to_update = list(PARAM_NAMES)
+        else:
+            self.params_to_update = ["center", "amplitude"]
+        payload, _ = self._fit_frame(file_index, float(R if R is not None else self.initial_R), 1, 1)
+        self.results_by_num[payload.num] = payload
+        return payload
 
     def _run_with_R(
         self,

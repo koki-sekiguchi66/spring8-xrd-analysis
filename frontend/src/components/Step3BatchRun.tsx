@@ -7,6 +7,7 @@ import {
   ArrowRight,
   RefreshCw,
   LineChart,
+  X,
 } from 'lucide-react';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
@@ -112,6 +113,44 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
     setBatchConfigs((prev) =>
       prev.map((cfg) => (cfg.group_id === groupId ? { ...cfg, ...patch } : cfg))
     );
+  };
+
+  /** Initial frame for an engine: 2PeaksRatio needs a pre-onset frame, 3PeaksLuders a post-onset one. */
+  const pickInitFor = (
+    cfg: GroupBatchConfig,
+    engine: GroupBatchConfig['engine']
+  ): Partial<GroupBatchConfig> => {
+    const opts = cfg.init_options;
+    if (!opts || (engine !== '2PeaksRatio' && engine !== '3PeaksLuders')) return {};
+    const nums = Object.keys(opts)
+      .map(Number)
+      .sort((a, b) => b - a);
+    const onset = cfg.dimt_onset_num;
+    const n =
+      engine === '2PeaksRatio' ? nums.find((v) => v <= onset) : nums.find((v) => v >= onset);
+    if (n === undefined) return {};
+    const peaks = opts[String(n)];
+    const patch: Partial<GroupBatchConfig> = { init_num: n, init_peaks: peaks };
+    if (engine === '2PeaksRatio' && peaks.length > 1 && peaks[0].A > 0) {
+      patch.R = Number((peaks[1].A / peaks[0].A).toFixed(4));
+    }
+    return patch;
+  };
+
+  /** Harada's cold-rolled flow: 2PeaksRatio (num <= onset) + 3PeaksLuders (num >= onset, R = best_R). */
+  const addLudersGroup = (cfg: GroupBatchConfig) => {
+    const id = `${cfg.group_id}_luders`;
+    if (batchConfigs.some((c) => c.group_id === id)) return;
+    const base: GroupBatchConfig = {
+      ...cfg,
+      group_id: id,
+      engine: '3PeaksLuders',
+      peaks: ['fcc111a', 'bcc110a', 'bcc1102'],
+      R_source_group: cfg.group_id,
+      ...ENGINE_RUN_DEFAULTS['3PeaksLuders'],
+      default_fit_limits: undefined,
+    };
+    setBatchConfigs((prev) => [...prev, { ...base, ...pickInitFor(base, '3PeaksLuders') }]);
   };
 
   const updatePeakLimit = (
@@ -497,6 +536,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                             engine,
                             ...ENGINE_RUN_DEFAULTS[engine],
                             default_fit_limits: undefined,
+                            ...pickInitFor(cfg, engine),
                           });
                         }}
                         className="w-40 h-7 text-xs"
@@ -528,6 +568,19 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                           <ChevronDown className="size-4" aria-hidden="true" />
                         )}
                       </Button>
+                      {cfg.R_source_group && (
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          aria-label={`${cfg.group_id} を削除`}
+                          onClick={() =>
+                            setBatchConfigs((prev) => prev.filter((c) => c.group_id !== cfg.group_id))
+                          }
+                          className="px-1.5"
+                        >
+                          <X className="size-4" aria-hidden="true" />
+                        </Button>
+                      )}
                     </div>
                   </div>
 
@@ -594,7 +647,11 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                         </div>
                         {cfg.engine === '3PeaksLuders' && (
                           <div>
-                            <FieldLabel>強度比 R (2PeaksRatio の best_R)</FieldLabel>
+                            <FieldLabel>
+                              {cfg.R_source_group
+                                ? `R (実行時に ${cfg.R_source_group} の best_R を使用)`
+                                : '強度比 R (2PeaksRatio の best_R)'}
+                            </FieldLabel>
                             <UnitNumberInput
                               step="0.02"
                               value={cfg.R}
@@ -609,6 +666,19 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                       {cfg.engine === '2PeaksRatio' && (
                         <Notice tone="info">
                           冷間圧延材 (ver10): num ≤ 変態開始のみ前向き解析・R 粗→細探索。初期値は変態前ファイル
+                          (#{cfg.init_num})
+                          {!batchConfigs.some((c) => c.group_id === `${cfg.group_id}_luders`) && (
+                            <>
+                              {' '}
+                              <button
+                                type="button"
+                                className="underline underline-offset-2 hover:text-sky-100 transition-colors duration-150"
+                                onClick={() => addLudersGroup(cfg)}
+                              >
+                                変態後の 3PeaksLuders 群を追加 (R = best_R)
+                              </button>
+                            </>
+                          )}
                         </Notice>
                       )}
                       {cfg.engine === '3PeaksLuders' && (
@@ -616,6 +686,16 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                           冷間圧延材 (ver4): num ≥ 変態開始のみ解析。初期値は変態後ファイル
                         </Notice>
                       )}
+
+                      <CheckboxRow
+                        checked={cfg.fit_y0 ?? false}
+                        onChange={(val) => updateGroupConfig(cfg.group_id, { fit_y0: val })}
+                        label={
+                          <span className="text-xs">
+                            定数背景 y0 を fit (任意・原田法外: 背景除去後の残留背景が大きい時)
+                          </span>
+                        }
+                      />
 
                       {cfg.peaks.some((pk) => pk === 'bcc110' || pk === 'bcc101') && (
                         <div className="p-2.5 rounded-md bg-[#0a0b0e] border border-amber-500/35 space-y-2">

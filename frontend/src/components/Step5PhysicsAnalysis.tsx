@@ -48,6 +48,8 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
   const [excludedRefl, setExcludedRefl] = useState<string[]>([]);
   const [bIso, setBIso] = useState<number>(0.35);
   const [rLattice, setRLattice] = useState<'measured' | 'reference'>('measured');
+  // '' = all frames; e.g. exclude frames after fracture
+  const [maxNum, setMaxNum] = useState<string>('');
   const [showAdvancedParams, setShowAdvancedParams] = useState<boolean>(false);
 
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -75,7 +77,11 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
     }
   };
 
-  const handleRunAnalysis = async (overrideExcel?: string, overrideExcluded?: string[]) => {
+  const handleRunAnalysis = async (
+    overrideExcel?: string,
+    overrideExcluded?: string[],
+    overrideMaxNum?: string
+  ) => {
     const targetExcel = (overrideExcel !== undefined ? overrideExcel : excelPath).trim();
     if (!targetExcel && !hasSessionGroups && !folderPath) {
       setErrorMsg('対象データ未指定 (Step 3 実行または output.xlsx 指定が必要)');
@@ -97,6 +103,10 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         zero_alpha_before_num: zeroAlphaBefore.trim() === '' ? undefined : Number(zeroAlphaBefore),
         b_iso_A2: bIso,
         r_lattice: rLattice,
+        max_num: (() => {
+          const v = (overrideMaxNum ?? maxNum).trim();
+          return v === '' ? undefined : Number(v);
+        })(),
       });
       setResult(res);
       onPhysicsComputed?.();
@@ -346,6 +356,15 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
           <div>
+            <FieldLabel>解析範囲 num ≤</FieldLabel>
+            <UnitNumberInput
+              step="1"
+              value={maxNum}
+              placeholder="全フレーム"
+              onChange={(e) => setMaxNum(e.target.value)}
+            />
+          </div>
+          <div>
             <FieldLabel>B (Debye-Waller)</FieldLabel>
             <UnitNumberInput
               unit="Å²"
@@ -435,6 +454,24 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       </Disclosure>
 
       {errorMsg && <Notice tone="error">{errorMsg}</Notice>}
+      {result?.fracture_num_estimate != null && maxNum.trim() === '' && (
+        <Notice tone="warning">
+          <span className="tabular-nums">
+            num {result.fracture_num_estimate} 以降で全強度が急落 (破断の可能性)。
+          </span>{' '}
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-amber-100 transition-colors duration-150"
+            onClick={() => {
+              const v = String((result.fracture_num_estimate ?? 1) - 1);
+              setMaxNum(v);
+              handleRunAnalysis(undefined, undefined, v);
+            }}
+          >
+            num ≤ {result.fracture_num_estimate - 1} で再計算
+          </button>
+        </Notice>
+      )}
 
       {/* KPI Strip */}
       <MetricStrip columns={4}>

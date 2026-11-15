@@ -229,3 +229,72 @@ def test_ratio2_uses_initial_set_candidates(synthetic_dir: Path):
     }
     fitter = Ratio2Fitter(synthetic_dir, ["fcc111", "bcc110"], init, dimt_onset_num=20, num_init_val_set=3, r_candidates=[0.05, 0.04, 0.06, 0.07])
     assert fitter.r_candidates == [0.05, 0.04, 0.06]
+
+
+def test_optional_y0_background_removes_offset_bias(tmp_path: Path):
+    """A residual constant background is absorbed by the broad peak without y0 and removed with it."""
+    root = tmp_path / "bcg_removed_arpls"
+    root.mkdir()
+    rng = np.random.default_rng(7)
+    x = np.arange(19.0, 21.2, 0.0046)
+    c211 = _tt(A_A, (2, 1, 1))
+    for num in range(1, 11):
+        y = _profile(x, 300.0, c211, 0.47) + 20.0 + rng.normal(0.0, 1.0, x.size)
+        np.savetxt(root / f"off_{num:04d}bcg.csv", np.c_[x, y], delimiter=",", fmt="%.5f")
+    kw = dict(
+        bcg_dir=root,
+        peak="bcc211",
+        init_params={"num": 5, "v1_center": c211, "v1_amplitude": 300.0, "v1_wG": 0.28, "v1_wL": 0.21},
+        th_min=c211 - 0.7,
+        th_max=c211 + 0.7,
+    )
+    plain = SinglePeakFitter(**kw).run_all()["dataframe"]
+    with_y0 = SinglePeakFitter(**kw, fit_y0=True, y0_init=15.0).run_all()["dataframe"]
+    assert "y0" not in plain.columns and list(with_y0.columns[-2:]) == ["y0", "residual"]
+    assert plain["I_bcc211"].median() > 1.10 * 300.0  # bias of the no-background model (Harada)
+    assert abs(with_y0["I_bcc211"].median() / 300.0 - 1.0) < 0.05
+    assert abs(with_y0["y0"].median() - 20.0) < 3.0
+
+
+def test_engine_repair_reproduces_run(synthetic_dir: Path):
+    """Step 4 engine repair seeded from the neighbouring frame gives the same result as the run."""
+    c200 = _tt(A_G, (2, 0, 0))
+    kw = dict(
+        bcg_dir=synthetic_dir,
+        peak="fcc200",
+        init_params={"num": 10, "v1_center": c200, "v1_amplitude": 600.0, "v1_wG": 0.024, "v1_wL": 0.018},
+        th_min=c200 - 0.4,
+        th_max=c200 + 0.4,
+    )
+    rows = {r["num"]: r for r in SinglePeakFitter(**kw).run_all()["rows"]}
+    fitter = SinglePeakFitter(**kw)
+    idx = [n for n, _ in fitter.files].index(30)
+    fitter.seed_from_row(rows[29], neighbor_index=idx - 1)
+    rep = fitter.refit_frame(idx).row_data
+    assert abs(rep["I_fcc200"] / rows[30]["I_fcc200"] - 1.0) < 1e-3
+    assert abs(rep["2th_fcc200"] - rows[30]["2th_fcc200"]) < 1e-4
+
+
+def test_fracture_detection_and_analysis_range():
+    from backend.core.physics_analyzer import infer_fracture_num
+
+    nums = list(range(1, 41))
+    t200 = _tt(A_G, (2, 0, 0))
+    I = [600.0 if n < 33 else 80.0 for n in nums]
+    g = {"fcc200": {"peaks": ["fcc200"], "rows": _rows(nums, **{"2th_fcc200": [t200] * 40, "I_fcc200": I, "wG_fcc200": [0.02] * 40, "wL_fcc200": [0.01] * 40, "FWHM_fcc200": [0.025] * 40})}}
+    assert infer_fracture_num(g) == 33
+    ph = compute_physical_analysis(g, wavelength_nm=LAM, max_num=32)
+    assert ph["nums"][-1] == 32 and ph["fracture_num_estimate"] == 33
+
+
+def test_cold_rolled_groups_disable_pre_onset_zeroing_and_luders_init():
+    from backend.api.routes_fitting import GroupBatchConfig, _luders_init_params
+    from backend.core.physics_analyzer import infer_alpha_onset
+
+    assert infer_alpha_onset({"a": {"engine": "1Peak", "dimt_onset_num": 50}}) == 50
+    assert infer_alpha_onset({"a": {"engine": "1Peak", "dimt_onset_num": 50}, "b": {"engine": "2PeaksRatio", "dimt_onset_num": 50}}) == 0
+    cfg = GroupBatchConfig(group_id="L", engine="3PeaksLuders", peaks=["fcc111a", "bcc110a", "bcc1102"], init_num=200, init_peaks=[], R=0.3)
+    p = _luders_init_params(cfg, {"num": 200, "v1_center": 11.2, "v1_amplitude": 1000.0, "v1_sigma": 0.01, "v1_gamma": 0.01,
+                                  "v2_center": 11.45, "v2_amplitude": 900.0, "v2_sigma": 0.1, "v2_gamma": 0.1})
+    assert p["v2_amplitude"] == pytest.approx(300.0) and p["v3_amplitude"] == pytest.approx(600.0)
+    assert p["v2_center"] < p["v3_center"] < cfg.v3_center_cap

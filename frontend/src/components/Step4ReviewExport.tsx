@@ -88,6 +88,9 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
   const [selectedNums, setSelectedNums] = useState<number[]>([]);
   const [manualInput, setManualInput] = useState('');
   const [useNeighborInterpolation, setUseNeighborInterpolation] = useState(true);
+  // engine: same model/limits/residual as the Step 3 run, seeded from the neighboring frame
+  const [engineRepair, setEngineRepair] = useState(true);
+  const repairMode = engineRepair ? 'engine' : 'free';
   const [varyY0, setVaryY0] = useState(true);
 
   const [inspectNum, setInspectNum] = useState<number | null>(null);
@@ -230,18 +233,21 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
 
   const applyUpdatedRowsToGroup = (
     gid: string,
-    updates: Array<{ num: number; updated_row: Record<string, number> }>
+    updates: Array<{ num: number; updated_row: Record<string, number>; is_outlier?: boolean }>
   ) => {
     setBatchResults((prev) => {
       const target = prev[gid];
       if (!target) return prev;
       const updateMap = new Map(updates.map((u) => [u.num, u.updated_row]));
-      const repairedNums = new Set(updates.map((u) => u.num));
+      const repairedNums = new Set(updates.filter((u) => !u.is_outlier).map((u) => u.num));
+      const stillOutliers = updates.filter((u) => u.is_outlier).map((u) => u.num);
       const nextRows = target.rows.map((row) => {
         const updated = updateMap.get(row.num);
         return updated ? { ...row, ...updated } : row;
       });
-      const nextOutlierNums = (target.outlier_nums || []).filter((n) => !repairedNums.has(n));
+      const nextOutlierNums = Array.from(
+        new Set([...(target.outlier_nums || []).filter((n) => !repairedNums.has(n)), ...stillOutliers])
+      ).sort((a, b) => a - b);
       return {
         ...prev,
         [gid]: {
@@ -271,12 +277,14 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         folder_path: folderPath,
         use_neighbor_interpolation: useNeighborInterpolation,
         vary_y0: varyY0,
+        mode: repairMode,
         items,
       });
       setBatchSummary(res);
       const validUpdates = (res.repaired_items || []).map((item) => ({
         num: item.num,
         updated_row: item.updated_row,
+        is_outlier: item.is_outlier,
       }));
       if (validUpdates.length > 0) {
         applyUpdatedRowsToGroup(activeGroup.group_id, validUpdates);
@@ -311,6 +319,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         status: string;
         num: number;
         updated_row: Record<string, number>;
+        is_outlier?: boolean;
         fit: CandidateFitResult;
       }>('/api/fitting/refit-file', {
         folder_path: folderPath,
@@ -321,10 +330,11 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         range_max: rangeMax,
         ...arrays,
         vary_y0: varyY0,
+        mode: repairMode,
       });
 
       applyUpdatedRowsToGroup(activeGroup.group_id, [
-        { num: res.num, updated_row: res.updated_row },
+        { num: res.num, updated_row: res.updated_row, is_outlier: res.is_outlier },
       ]);
       await loadWaveform(activeGroup.group_id, inspectNum);
 
@@ -372,12 +382,14 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
         folder_path: folderPath,
         use_neighbor_interpolation: false,
         vary_y0: varyY0,
+        mode: repairMode,
         items,
       });
       setBatchSummary(res);
       const validUpdates = (res.repaired_items || []).map((item) => ({
         num: item.num,
         updated_row: item.updated_row,
+        is_outlier: item.is_outlier,
       }));
       if (validUpdates.length > 0) {
         applyUpdatedRowsToGroup(activeGroup.group_id, validUpdates);
@@ -642,10 +654,17 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                 </div>
 
                 <CheckboxRow
-                  checked={useNeighborInterpolation}
-                  onChange={setUseNeighborInterpolation}
-                  label="近傍フレーム補間"
+                  checked={engineRepair}
+                  onChange={setEngineRepair}
+                  label="エンジン準拠 (Step3 と同じモデル・制約)"
                 />
+                {!engineRepair && (
+                  <CheckboxRow
+                    checked={useNeighborInterpolation}
+                    onChange={setUseNeighborInterpolation}
+                    label="近傍フレーム補間"
+                  />
+                )}
 
                 <Button
                   variant="amber"
@@ -780,7 +799,12 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                 actions={<SlidersHorizontal className="w-3.5 h-3.5 text-[#5d6473]" />}
               />
               <PanelBody className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
+                {engineRepair && (
+                  <p className="text-[11px] leading-snug text-[#8b93a3]">
+                    エンジン準拠: 窓・制約は Step3 の設定。下の値は初期値として使用。
+                  </p>
+                )}
+                <div className={`grid grid-cols-2 gap-2 ${engineRepair ? 'hidden' : ''}`}>
                   <div>
                     <FieldLabel>min (2θ)</FieldLabel>
                     <UnitNumberInput
@@ -801,7 +825,7 @@ export const Step4ReviewExport: React.FC<Step4ReviewExportProps> = ({
                   </div>
                 </div>
 
-                <CheckboxRow checked={varyY0} onChange={setVaryY0} label="y0 可変" />
+                {!engineRepair && <CheckboxRow checked={varyY0} onChange={setVaryY0} label="y0 可変" />}
 
                 <div className="space-y-2 max-h-[340px] overflow-y-auto pr-0.5">
                   {activeGroup.peaks.map((pk, idx) => {

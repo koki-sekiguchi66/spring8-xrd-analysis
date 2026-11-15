@@ -95,7 +95,14 @@ class BaseFitter:
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 0.7,
         max_attempts: int = 5,
+        fit_y0: bool = False,
+        y0_init: float = 0.0,
     ) -> None:
+        # Optional constant background y0 in the window (Origin's Voigt model is y0 + Voigt;
+        # Harada's scripts fit without it). Off by default.
+        self.fit_y0 = bool(fit_y0)
+        self.y0_init = float(y0_init or 0.0)
+        self.prev_y0 = self.y0_init
         self.bcg_dir = Path(bcg_dir).resolve()
         self.peaks = list(peaks)
         self.n = len(self.peaks)
@@ -227,6 +234,59 @@ class BaseFitter:
         self.prev_params = self._build_prev_params(self.Init_pars)
         self.prev_integral = 0.0
         self.intensity_scale_factor = 1.0
+        self.prev_y0 = self.y0_init
+
+    def seed_from_row(self, row: Dict[str, Any], neighbor_index: Optional[int] = None) -> None:
+        """Start the next fit from a fitted row (Step 4 repair), as if that row were the previous frame.
+
+        `neighbor_index`: file index of that row, used for the integral scale factor.
+        """
+        k_g = 2.0 * np.sqrt(2.0 * np.log(2.0))
+        for q, pk in enumerate(self.peaks, 1):
+            vals = {
+                "center": row.get(f"2th_{pk}"),
+                "amplitude": row.get(f"I_{pk}"),
+                "sigma": None if row.get(f"wG_{pk}") is None else float(row[f"wG_{pk}"]) / k_g,
+                "gamma": None if row.get(f"wL_{pk}") is None else float(row[f"wL_{pk}"]) / 2.0,
+            }
+            for nm, v in vals.items():
+                if v is not None and np.isfinite(float(v)):
+                    self.Init_pars[f"v{q}_{nm}"] = float(v)
+        self.prev_params = self._build_prev_params(self.Init_pars)
+        if row.get("y0") is not None and np.isfinite(float(row["y0"])):
+            self.prev_y0 = float(row["y0"])
+        self.prev_integral = 0.0
+        if neighbor_index is not None and 0 <= neighbor_index < len(self.files):
+            self.load_window_data(neighbor_index)
+            self.prev_integral = self.current_integral
+
+    def refit_frame(self, file_index: int) -> "FitStepPayload":
+        """Re-fit one frame with this engine's model (after `seed_from_row`)."""
+        return self.fit_one_file(file_index, completed_count=1)  # type: ignore[attr-defined]
+
+    def attach_y0(self, mod: Any, pars: Any, In: np.ndarray) -> Tuple[Any, Any]:
+        """Add the constant background term `bkg_c` (started from the previous frame) when `fit_y0`."""
+        if not self.fit_y0:
+            return mod, pars
+        from lmfit.models import ConstantModel
+
+        cm = ConstantModel(prefix="bkg_")
+        p = cm.make_params()
+        # y0 cannot exceed the window edges (the edge level contains y0 + Voigt tails)
+        k = max(3, len(In) // 20)
+        edge = float(min(np.mean(In[:k]), np.mean(In[-k:])))
+        lo = float(np.min(In)) - 0.1 * float(np.ptp(In))
+        hi = max(lo + 1e-6, min(float(np.median(In)), edge))
+        p["bkg_c"].set(value=float(np.clip(self.prev_y0, lo, hi)), min=lo, max=hi, vary=True)
+        pars.update(p)
+        return mod + cm, pars
+
+    def carry_y0(self, out: Any) -> float:
+        """Store the fitted y0 for the next frame and return it (0 when y0 is not fitted)."""
+        if not self.fit_y0:
+            return 0.0
+        self.prev_y0 = float(out.best_values.get("bkg_c", self.prev_y0))
+        return self.prev_y0
 
     def get_effective_limits(self) -> Dict[str, Dict[str, float]]:
         fit_limits = copy.deepcopy(self.default_fit_limits)
@@ -267,7 +327,9 @@ class BaseFitter:
 
         return num, path.name, th, In
 
-    def build_row_dict(self, num: int, best_values: Dict[str, float], residual: float = 0.0) -> Dict[str, float]:
+    def build_row_dict(
+        self, num: int, best_values: Dict[str, float], residual: float = 0.0, y0: Optional[float] = None
+    ) -> Dict[str, float]:
         """Build unified row dictionary `[num, 2th_{peak}, I_{peak}, wG_{peak}, wL_{peak}, FWHM_{peak}, ..., residual]`."""
         row: Dict[str, float] = {"num": int(num)}
         for m, pk in enumerate(self.peaks, 1):
@@ -285,12 +347,16 @@ class BaseFitter:
             row[f"wG_{pk}"] = wG
             row[f"wL_{pk}"] = wL
             row[f"FWHM_{pk}"] = fwhm
+        if self.fit_y0:
+            row["y0"] = float(y0 if y0 is not None else best_values.get("bkg_c", 0.0))
         row["residual"] = float(residual)
         return row
 
     def build_dataframe(self) -> pd.DataFrame:
         """Return sorted DataFrame strictly matching `[num, 2th_{peak}, I_{peak}, wG_{peak}, wL_{peak}, FWHM_{peak}]`."""
         cols = build_unified_columns(self.peaks)
+        if self.fit_y0:
+            cols = cols[:-1] + ["y0", cols[-1]]
         if not self.results_by_num:
             return pd.DataFrame(columns=cols)
         rows = [

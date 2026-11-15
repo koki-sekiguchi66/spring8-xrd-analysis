@@ -338,6 +338,11 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
           .filter((idx) => idx >= 0),
         use_bcc211_constraint: false,
         bcc110_center_tol_deg: 0.05,
+        init_options: Object.fromEntries(
+          Object.entries(g.fits_by_num)
+            .filter(([, f]) => f && !f.error && f.peaks && f.peaks.length === g.peaks.length)
+            .map(([n, f]) => [n, f.peaks])
+        ),
       });
     }
 

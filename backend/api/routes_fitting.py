@@ -56,8 +56,12 @@ class GroupBatchConfig(BaseModel):
     vib_ratio_fine: float = 0.1
     r_candidates: Optional[List[float]] = None
     v3_center_cap: float = 11.65
+    # 3PeaksLuders: take R from the best_R of this 2PeaksRatio group (Harada's cold-rolled flow)
+    R_source_group: Optional[str] = None
     use_bcc211_constraint: bool = False
     bcc110_center_tol_deg: float = 0.05
+    # Constant background y0 in the window (Origin's y0). Off = Harada's scripts.
+    fit_y0: bool = False
     default_fit_limits: Optional[Dict[str, Dict[str, float]]] = None
 
 
@@ -79,6 +83,9 @@ class RepairFileRequest(BaseModel):
     initial_wL: Optional[List[float]] = None
     initial_A: Optional[List[float]] = None
     vary_y0: bool = False
+    # "engine": re-fit with the group's own engine model (constraints, limits, residual definition)
+    # seeded from the neighboring frame in the pass direction; "free": unconstrained Origin Voigt fit.
+    mode: str = "engine"
 
 
 class ExportExcelRequest(BaseModel):
@@ -105,6 +112,7 @@ class BatchRefitRequest(BaseModel):
     items: List[BatchRefitItem]
     use_neighbor_interpolation: bool = True
     vary_y0: bool = False
+    mode: str = "engine"
 
 
 class PhysicsAnalysisRequest(BaseModel):
@@ -122,6 +130,8 @@ class PhysicsAnalysisRequest(BaseModel):
     zero_alpha_before_num: Optional[int] = None
     b_iso_A2: float = 0.35
     r_lattice: str = "measured"
+    min_num: Optional[int] = None
+    max_num: Optional[int] = None
 
 
 def _build_init_params_from_config(cfg: GroupBatchConfig) -> Dict[str, float]:
@@ -137,22 +147,54 @@ def _build_init_params_from_config(cfg: GroupBatchConfig) -> Dict[str, float]:
 
 
 def _order_groups_for_bcc211_dependency(groups: List[GroupBatchConfig]) -> List[GroupBatchConfig]:
-    """Item 6-3: Ensure `bcc211` (`bcc112`) is executed before `fcc111 + bcc110` when `use_bcc211_constraint` is enabled."""
+    """Run order: bcc211 before a bcc211-constrained fcc111 + bcc110 group (item 6-3), and
+    2PeaksRatio before 3PeaksLuders (best_R handoff in the cold-rolled flow). Stable otherwise."""
     needs_bcc211_first = any(
         g.use_bcc211_constraint and any(pk in ("bcc110", "bcc101") for pk in g.peaks)
         for g in groups
     )
-    if not needs_bcc211_first:
-        return list(groups)
 
     def _priority(cfg: GroupBatchConfig) -> int:
-        if any(pk in ("bcc211", "bcc112") for pk in cfg.peaks):
-            return 0
-        if cfg.use_bcc211_constraint and any(pk in ("bcc110", "bcc101") for pk in cfg.peaks):
-            return 2
+        eng = _engine_of(cfg)
+        if eng == "3PeaksLuders":
+            return 3
+        if needs_bcc211_first:
+            if any(pk in ("bcc211", "bcc112") for pk in cfg.peaks):
+                return 0
+            if cfg.use_bcc211_constraint and any(pk in ("bcc110", "bcc101") for pk in cfg.peaks):
+                return 2
         return 1
 
     return sorted(groups, key=_priority)
+
+
+def _resolve_luders_R(cfg: GroupBatchConfig) -> GroupBatchConfig:
+    """3PeaksLuders: R = best_R of the linked 2PeaksRatio group of this session, when available."""
+    if _engine_of(cfg) != "3PeaksLuders" or not cfg.R_source_group:
+        return cfg
+    src = SESSION_STORE.get("groups", {}).get(cfg.R_source_group) or {}
+    if src.get("best_R") is not None:
+        return cfg.model_copy(update={"R": float(src["best_R"])})
+    return cfg
+
+
+def _luders_init_params(cfg: GroupBatchConfig, init_pars: Dict[str, float]) -> Dict[str, float]:
+    """Complete 3PeaksLuders initial values from a 2-peak (fcc111 + bcc110) Origin fit.
+
+    v2 (pre-existing alpha') = R x v1 as in the Lüders script (fixed_ratio); v3 (new alpha') takes the
+    remaining bcc110 area, starting 0.03 deg above v2 (below `v3_center_cap`).
+    """
+    if "v3_center" in init_pars or "v2_center" not in init_pars:
+        return init_pars
+    out = dict(init_pars)
+    a_tot = float(out["v2_amplitude"])
+    a_pre = min(float(cfg.R) * float(out["v1_amplitude"]), 0.95 * a_tot)
+    out["v2_amplitude"] = max(1e-6, a_pre)
+    out["v3_amplitude"] = max(0.05 * a_tot, a_tot - a_pre)
+    out["v3_center"] = min(float(out["v2_center"]) + 0.03, float(cfg.v3_center_cap) - 0.005)
+    out["v3_sigma"] = float(out["v2_sigma"])
+    out["v3_gamma"] = float(out["v2_gamma"])
+    return out
 
 
 def _extract_bcc211_guide_from_session(session_groups: Dict[str, Any]) -> Dict[int, Dict[str, float]]:
@@ -200,6 +242,7 @@ def _instantiate_fitter(
     defaults = ENGINE_DEFAULTS.get(eng, ENGINE_DEFAULTS["MultiPeaks"])
     residual_limit = float(cfg.residual_limit) if cfg.residual_limit is not None else defaults["residual_limit"]
     max_attempts = int(cfg.max_attempts) if cfg.max_attempts is not None else int(defaults["max_attempts"])
+    y0_init = float(cfg.init_peaks[0].get("y0", 0.0) or 0.0) if (cfg.fit_y0 and cfg.init_peaks) else 0.0
 
     if eng == "1Peak":
         return SinglePeakFitter(
@@ -216,6 +259,8 @@ def _instantiate_fitter(
             default_fit_limits=cfg.default_fit_limits,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
+            fit_y0=cfg.fit_y0,
+            y0_init=y0_init,
         )
     if eng == "2PeaksRatio":
         return Ratio2Fitter(
@@ -236,12 +281,14 @@ def _instantiate_fitter(
             default_fit_limits=cfg.default_fit_limits,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
+            fit_y0=cfg.fit_y0,
+            y0_init=y0_init,
         )
     if eng == "3PeaksLuders":
         return Luders3Fitter(
             bcg_dir=bcg_dir,
             peaks=cfg.peaks if len(cfg.peaks) == 3 else ["fcc111a", "bcc110a", "bcc1102"],
-            init_params=init_pars,
+            init_params=_luders_init_params(cfg, init_pars),
             group_id=cfg.group_id,
             th_min=cfg.th_min if cfg.th_min is not None else 10.6,
             th_max=cfg.th_max if cfg.th_max is not None else 12.3,
@@ -255,6 +302,8 @@ def _instantiate_fitter(
             default_fit_limits=cfg.default_fit_limits,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
+            fit_y0=cfg.fit_y0,
+            y0_init=y0_init,
         )
     return MultiPeakFitter(
         bcg_dir=bcg_dir,
@@ -272,6 +321,8 @@ def _instantiate_fitter(
         default_fit_limits=cfg.default_fit_limits,
         residual_limit=residual_limit,
         max_attempts=max_attempts,
+        fit_y0=cfg.fit_y0,
+        y0_init=y0_init,
     )
 
 
@@ -332,6 +383,7 @@ async def ws_fitting_run(websocket: WebSocket) -> None:
 
         for g_idx, cfg in enumerate(ordered_groups):
             bcc211_guide = _extract_bcc211_guide_from_session(SESSION_STORE["groups"])
+            cfg = _resolve_luders_R(cfg)
             fitter = _instantiate_fitter(bcg_dir, cfg, bcc211_guide_by_num=bcc211_guide)
             n_files = len(fitter.files)
             stride = max(1, n_files // 60)  # Stream waveform every ~stride files + first/last/outliers for 60fps UI
@@ -397,6 +449,7 @@ async def ws_fitting_run(websocket: WebSocket) -> None:
                 "history_R": res.get("history_R"),
                 "history_residual": res.get("history_residual"),
                 "results_by_num": res["results_by_num"],
+                "config": cfg.model_dump(),
             }
             SESSION_STORE["groups"][cfg.group_id] = group_record
 
@@ -464,6 +517,7 @@ async def api_fitting_run_sync(req: BatchRunRequest) -> Dict[str, Any]:
     ordered_groups = _order_groups_for_bcc211_dependency(req.groups)
     for cfg in ordered_groups:
         bcc211_guide = _extract_bcc211_guide_from_session(SESSION_STORE["groups"])
+        cfg = _resolve_luders_R(cfg)
         fitter = _instantiate_fitter(bcg_dir, cfg, bcc211_guide_by_num=bcc211_guide)
         res = await asyncio.to_thread(fitter.run_all)
         outlier_nums = [num for num, p in res["results_by_num"].items() if p.is_outlier]
@@ -481,6 +535,7 @@ async def api_fitting_run_sync(req: BatchRunRequest) -> Dict[str, Any]:
             "history_R": res.get("history_R"),
             "history_residual": res.get("history_residual"),
             "results_by_num": res["results_by_num"],
+            "config": cfg.model_dump(),
         }
         summary_groups[cfg.group_id] = {
             "group_id": cfg.group_id,
@@ -532,6 +587,77 @@ async def api_get_fitted_waveform(
     raise HTTPException(status_code=404, detail=f"Waveform for group '{group_id}' num={num} not found in session.")
 
 
+def _neighbor_seed(
+    group_rec: Dict[str, Any], num: int, exclude: set
+) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+    """Nearest clean row in the pass direction of the engine (the frame the original run came from).
+
+    1Peak / MultiPeaks / 3PeaksLuders: backward pass for num <= initial num (previous = num + 1),
+    forward pass after it (previous = num - 1). 2PeaksRatio: forward from the first file.
+    """
+    cfg = group_rec.get("config") or {}
+    rows = {int(r["num"]): r for r in group_rec.get("rows", []) if r.get("num") is not None}
+    bad = set(int(n) for n in group_rec.get("outlier_nums", [])) | set(exclude) | {int(num)}
+    clean = sorted(n for n in rows if n not in bad)
+    if not clean:
+        return None, None
+    after = [n for n in clean if n > num]
+    before = [n for n in clean if n < num]
+    forward = group_rec.get("engine") == "2PeaksRatio" or num > int(cfg.get("init_num", num))
+    if forward:
+        pick = before[-1] if before else after[0]
+    else:
+        pick = after[0] if after else before[-1]
+    return rows[pick], pick
+
+
+def _engine_repair(
+    bcg_dir: Path,
+    group_rec: Dict[str, Any],
+    num: int,
+    exclude: set,
+    manual: Optional[Dict[str, List[float]]] = None,
+) -> FitStepPayload:
+    """Re-fit one frame with the group's own engine (same model, limits and residual as the run)."""
+    cfg = GroupBatchConfig(**group_rec["config"])
+    guide = _extract_bcc211_guide_from_session(SESSION_STORE.get("groups", {}))
+    fitter = _instantiate_fitter(bcg_dir, cfg, bcc211_guide_by_num=guide)
+    idx, _ = find_file_by_num(fitter.files, num)
+    if idx < 0:
+        raise FileNotFoundError(f"File num={num} not found in {bcg_dir}")
+    seed, seed_num = _neighbor_seed(group_rec, num, exclude)
+    seed = dict(seed or {})
+    if manual:
+        for k, pk in enumerate(cfg.peaks):
+            for key, col in (("centers", "2th_"), ("A", "I_"), ("wG", "wG_"), ("wL", "wL_")):
+                arr = manual.get(key)
+                if arr is not None and k < len(arr) and arr[k] is not None:
+                    seed[f"{col}{pk}"] = float(arr[k])
+    n_idx = find_file_by_num(fitter.files, seed_num)[0] if seed_num is not None else None
+    if seed:
+        fitter.seed_from_row(seed, neighbor_index=n_idx)
+    if isinstance(fitter, Ratio2Fitter):
+        R = group_rec.get("best_R")
+        return fitter.refit_frame(idx, R=float(R) if R is not None else None)
+    return fitter.refit_frame(idx)
+
+
+def _store_repaired_payload(group_rec: Dict[str, Any], payload: FitStepPayload) -> None:
+    num = int(payload.num)
+    rows = group_rec.setdefault("rows", [])
+    for r_idx, r in enumerate(rows):
+        if int(r.get("num", -1)) == num:
+            rows[r_idx] = dict(payload.row_data)
+            break
+    group_rec.setdefault("results_by_num", {})[num] = payload
+    outs = set(int(n) for n in group_rec.get("outlier_nums", []))
+    if payload.is_outlier:
+        outs.add(num)
+    else:
+        outs.discard(num)
+    group_rec["outlier_nums"] = sorted(outs)
+
+
 @router.post("/api/fitting/refit-file")
 async def api_repair_single_file(req: RepairFileRequest) -> Dict[str, Any]:
     """Re-fit a single outlier file in Step 4 and update the stored row and waveform in place."""
@@ -544,6 +670,27 @@ async def api_repair_single_file(req: RepairFileRequest) -> Dict[str, Any]:
         if path is None:
             raise FileNotFoundError(f"File num={req.num} not found in {bcg_dir}")
         actual_num = files[idx][0]
+
+        group_rec = SESSION_STORE.get("groups", {}).get(req.group_id)
+        if req.mode == "engine" and group_rec and group_rec.get("config"):
+            manual = {"centers": req.initial_centers, "A": req.initial_A, "wG": req.initial_wG, "wL": req.initial_wL}
+            payload = await asyncio.to_thread(_engine_repair, bcg_dir, group_rec, actual_num, set(), manual)
+            _store_repaired_payload(group_rec, payload)
+            saved_path = ""
+            try:
+                saved_path = (await asyncio.to_thread(export_session_to_analyzed_directory, folder_path=str(root))).get("saved_path", "")
+            except Exception:
+                pass
+            return {
+                "status": "ok",
+                "mode": "engine",
+                "num": actual_num,
+                "updated_row": payload.row_data,
+                "is_outlier": payload.is_outlier,
+                "saved_path": saved_path,
+                "fit": payload.to_stream_dict(include_waveform=True),
+            }
+
         arr = np.loadtxt(path, delimiter=",")
         x, y = arr[:, 0], arr[:, 1]
 
@@ -608,8 +755,10 @@ async def api_repair_single_file(req: RepairFileRequest) -> Dict[str, Any]:
 
         return {
             "status": "ok",
+            "mode": "free",
             "num": actual_num,
             "updated_row": updated_row,
+            "is_outlier": False,
             "saved_path": saved_path,
             "fit": fit_res.to_dict(),
         }
@@ -704,6 +853,26 @@ async def api_repair_batch_files(req: BatchRefitRequest) -> Dict[str, Any]:
             if path is None:
                 continue
             actual_num = files[idx][0]
+
+            if req.mode == "engine" and group_rec and group_rec.get("config"):
+                # Frames still waiting in this batch are not used as seeds
+                pending = {int(it.num) for it in req.items if it.group_id == gid and int(it.num) != actual_num}
+                manual = None
+                if item.initial_centers is not None:
+                    manual = {"centers": item.initial_centers, "A": item.initial_A, "wG": item.initial_wG, "wL": item.initial_wL}
+                payload = await asyncio.to_thread(_engine_repair, bcg_dir, group_rec, actual_num, pending, manual)
+                _store_repaired_payload(group_rec, payload)
+                repaired_results.append({
+                    "group_id": gid,
+                    "num": actual_num,
+                    "updated_row": payload.row_data,
+                    "rmse": round(payload.residual_rmse, 4),
+                    "relative_residual": round(payload.relative_residual, 4),
+                    "r_squared": None,
+                    "is_outlier": payload.is_outlier,
+                })
+                continue
+
             arr = np.loadtxt(path, delimiter=",")
             x, y = arr[:, 0], arr[:, 1]
 
@@ -773,6 +942,7 @@ async def api_repair_batch_files(req: BatchRefitRequest) -> Dict[str, Any]:
                 "rmse": round(fit_res.rmse, 4),
                 "relative_residual": round(fit_res.relative_residual, 4),
                 "r_squared": round(fit_res.r_squared, 5),
+                "is_outlier": False,
             })
 
         saved_path = ""
@@ -833,6 +1003,8 @@ async def api_physics_analysis(req: PhysicsAnalysisRequest) -> Dict[str, Any]:
             zero_alpha_before_num=req.zero_alpha_before_num,
             b_iso_A2=req.b_iso_A2,
             r_lattice=req.r_lattice,
+            min_num=req.min_num,
+            max_num=req.max_num,
         )
         return {
             "status": "ok",

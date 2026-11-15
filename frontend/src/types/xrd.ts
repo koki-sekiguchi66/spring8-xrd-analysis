@@ -160,6 +160,12 @@ export interface GroupBatchConfig {
   newly_forms_peak?: number[];
   use_bcc211_constraint?: boolean;
   bcc110_center_tol_deg?: number;
+  /** Constant background y0 in the window (Origin y0 + Voigt). Off = Harada's scripts. */
+  fit_y0?: boolean;
+  /** 3PeaksLuders: R = best_R of this 2PeaksRatio group (cold-rolled flow) */
+  R_source_group?: string;
+  /** Step 2 fits of this group per representative frame (num -> peaks), for re-choosing the initial frame */
+  init_options?: Record<string, PeakFitParam[]>;
   default_fit_limits?: Record<string, FitLimitConfig>;
   min_peak_separation?: number;
   suppress_before_onset?: boolean;
@@ -216,7 +222,8 @@ export interface BatchRefitRepairedItem {
   updated_row: Record<string, number>;
   rmse: number;
   relative_residual: number;
-  r_squared: number;
+  r_squared: number | null;
+  is_outlier?: boolean;
 }
 
 export interface BatchRefitResponse {
@@ -238,6 +245,10 @@ export interface PhysicsAnalysisResponse {
   wavelength_nm: number;
   wavelength_source?: 'user' | 'default';
   zero_alpha_before_num?: number;
+  analysis_min_num?: number | null;
+  analysis_max_num?: number | null;
+  /** First frame of a sustained collapse of the total fitted intensity (fracture), if any */
+  fracture_num_estimate?: number | null;
   energy_kev: number;
   gamma_peaks: string[];
   alpha_prime_peaks: string[];

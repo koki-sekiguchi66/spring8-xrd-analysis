@@ -423,7 +423,8 @@ def _create_physics_chart_png(phys: Dict[str, Any]) -> bytes:
     ax1.set_yscale("log")
     ax1.set_ylabel("Dislocation Density (m^-2)")
     ax1.set_title("Dislocation Density Evolution per Phase", fontsize=10, fontweight="bold")
-    ax1.legend(loc="best", fontsize=8)
+    if ax1.get_legend_handles_labels()[0]:
+        ax1.legend(loc="best", fontsize=8)
     ax1.grid(True, linestyle="--", alpha=0.4)
 
     # 3. Elastic Lattice Strain
@@ -437,7 +438,8 @@ def _create_physics_chart_png(phys: Dict[str, Any]) -> bytes:
     ax2.set_xlabel("File Number (num)")
     ax2.set_ylabel("Lattice Strain (με)")
     ax2.set_title("Elastic Lattice Strain Partitioning", fontsize=10, fontweight="bold")
-    ax2.legend(loc="best", fontsize=8, ncol=2)
+    if ax2.get_legend_handles_labels()[0]:
+        ax2.legend(loc="best", fontsize=8, ncol=2)
     ax2.grid(True, linestyle="--", alpha=0.4)
 
     plt.tight_layout()
@@ -487,8 +489,13 @@ def export_fitting_results_excel(
                 peaks: List[str] = item["peaks"]
                 sheet_name: str = str(item.get("sheet_name") or "".join(peaks))[:31]
                 unified_cols = build_unified_columns(peaks)
-
                 raw_rows = item["rows"]
+                has_y0 = ("y0" in raw_rows.columns) if isinstance(raw_rows, pd.DataFrame) else any(
+                    isinstance(r, dict) and "y0" in r for r in raw_rows
+                )
+                if has_y0:  # constant background fitted (optional): after the peak blocks, before residual
+                    unified_cols = unified_cols[:-1] + ["y0", unified_cols[-1]]
+
                 if isinstance(raw_rows, pd.DataFrame):
                     df = raw_rows[unified_cols].copy()
                 else:

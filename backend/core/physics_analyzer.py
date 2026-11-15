@@ -155,9 +155,42 @@ PREEXISTING_ALPHA_ENGINES = {"2PeaksRatio", "3PeaksLuders"}
 
 
 def infer_alpha_onset(groups: Dict[str, Any]) -> int:
-    """DIMT onset stored with the fitted groups (smallest one), or 0 if unknown."""
+    """DIMT onset stored with the fitted groups (smallest one), or 0 if unknown.
+
+    0 as well when any group was fitted with 2PeaksRatio / 3PeaksLuders: the specimen then contains
+    pre-existing martensite (cold-rolled), so alpha' must not be zeroed before the onset in any group.
+    """
+    if any(str(rec.get("engine", "")) in PREEXISTING_ALPHA_ENGINES for rec in groups.values()):
+        return 0
     onsets = [int(rec["dimt_onset_num"]) for rec in groups.values() if rec.get("dimt_onset_num")]
     return min(onsets) if onsets else 0
+
+
+def infer_fracture_num(groups: Dict[str, Any], drop_ratio: float = 0.5, ref_window: int = 15, confirm: int = 5) -> Optional[int]:
+    """First frame of a sustained collapse of the total fitted intensity (specimen fracture), or None.
+
+    Total = sum of all fitted I_ columns per frame. A frame is the fracture frame when it and the
+    following `confirm` frames all fall below `drop_ratio` x the median of the `ref_window` frames before it.
+    """
+    totals: Dict[int, float] = {}
+    for rec in groups.values():
+        for r in rec.get("rows", []) or []:
+            try:
+                n = int(r["num"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            v = sum(float(x) for k, x in r.items() if str(k).startswith("I_") and x is not None and np.isfinite(float(x)))
+            totals[n] = totals.get(n, 0.0) + v
+    nums = sorted(totals)
+    vals = np.array([totals[n] for n in nums], dtype=float)
+    for i in range(ref_window, len(nums)):
+        ref = float(np.median(vals[i - ref_window:i]))
+        if ref <= 0:
+            continue
+        nxt = vals[i:i + confirm + 1]
+        if len(nxt) and np.all(nxt < drop_ratio * ref):
+            return int(nums[i])
+    return None
 
 
 def merge_groups_into_dataframe(groups: Dict[str, Any]) -> Tuple[pd.DataFrame, List[str]]:
@@ -237,6 +270,8 @@ def compute_physical_analysis(
     kinetics_max_num: Optional[int] = None,
     zero_alpha_before_num: Optional[int] = None,
     r_lattice: str = "measured",
+    min_num: Optional[int] = None,
+    max_num: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Martensite fraction, lattice parameters/strains and dislocation densities per frame.
 
@@ -245,6 +280,8 @@ def compute_physical_analysis(
     noise there (amplitude bounded but not zero), which otherwise produces a spurious f_alpha'.
     Groups fitted with 2PeaksRatio / 3PeaksLuders (pre-existing martensite of cold-rolled specimens)
     are never zeroed. `None` = take the onset stored with the groups; `0` = disabled.
+
+    `min_num` / `max_num`: analysis range (e.g. exclude frames after fracture; see `infer_fracture_num`).
 
     `b_iso_A2` / `r_lattice`: Debye-Waller B (A^2) and the lattice parameters used for R_hkl
     ("measured" = medians of this data set, "reference" = `a_gamma0_nm` / `a_alpha0_nm`).
@@ -273,6 +310,12 @@ def compute_physical_analysis(
             continue
         df["num"] = df["num"].astype(int)
         df = df.sort_values("num").drop_duplicates(subset=["num"], keep="last").set_index("num")
+        if min_num is not None:
+            df = df[df.index >= int(min_num)]
+        if max_num is not None:
+            df = df[df.index <= int(max_num)]
+        if df.empty:
+            continue
         peaks = [p for p in grec.get("peaks", []) if f"I_{p}" in df.columns]
         group_frames.append((str(gid), df, peaks))
         for p in peaks:
@@ -491,9 +534,13 @@ def compute_physical_analysis(
             r[f"rho_{p}_m2"] = dislocation_by_peak[p][i]
         summary_rows.append(r)
 
+    fracture_num = infer_fracture_num(groups)
     return {
         "wavelength_nm": round(lam, 6),
         "wavelength_source": wavelength_source,
+        "analysis_min_num": int(min_num) if min_num is not None else None,
+        "analysis_max_num": int(max_num) if max_num is not None else None,
+        "fracture_num_estimate": fracture_num,
         "zero_alpha_before_num": zero_before,
         "energy_kev": round(1.23984193 / lam, 3),
         "gamma_peaks": gamma_keys,

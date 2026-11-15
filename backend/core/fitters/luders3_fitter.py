@@ -85,6 +85,8 @@ class Luders3Fitter(BaseFitter):
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 350.0,
         max_attempts: int = 5,
+        fit_y0: bool = False,
+        y0_init: float = 0.0,
     ) -> None:
         peaks_list = list(peaks) if peaks and len(peaks) == 3 else ["fcc111a", "bcc110a", "bcc1102"]
 
@@ -113,6 +115,8 @@ class Luders3Fitter(BaseFitter):
             update_list=update_list,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
+            fit_y0=fit_y0,
+            y0_init=y0_init,
         )
 
         self.dimt_onset_num = int(dimt_onset_num)
@@ -220,6 +224,7 @@ class Luders3Fitter(BaseFitter):
             pars[f"v{k}_sigma"].set(value=float(np.clip(cand_pars[f"v{k}_sigma"], s_min, s_max)), min=s_min, max=s_max, vary=True)
             pars[f"v{k}_gamma"].set(value=float(np.clip(cand_pars[f"v{k}_gamma"], g_min, g_max)), min=g_min, max=g_max, vary=True, expr=None)
 
+        mod, pars = self.attach_y0(mod, pars, In)
         out = mod.fit(In, pars, x=th, method="leastsq")
         comps = out.eval_components(x=th)
         residual_mean = float(np.mean(np.abs(out.residual)))
@@ -246,6 +251,7 @@ class Luders3Fitter(BaseFitter):
         best_pars = {f"v{r}_{nm}": float(out.best_values[f"v{r}_{nm}"]) for r in (1, 2, 3) for nm in PARAM_NAMES}
 
         self.prev_integral = self.current_integral
+        y0_val = self.carry_y0(out) if self.params_to_update else self.prev_y0
         for nm in PARAM_NAMES:
             if nm in self.params_to_update:
                 self.prev_params[nm] = [best_pars[f"v{r}_{nm}"] for r in (1, 2, 3)]
@@ -266,7 +272,7 @@ class Luders3Fitter(BaseFitter):
             relative_residual=relative_residual,
             attempts=attempt,
             is_outlier=bool(residual_mean >= self.residual_limit),
-            row_data=self.build_row_dict(num, best_pars, residual=residual_mean),
+            row_data=self.build_row_dict(num, best_pars, residual=residual_mean, y0=float(out.best_values.get("bkg_c", y0_val))),
             x=th.tolist(),
             y_obs=In.tolist(),
             y_fit=out.best_fit.tolist(),
@@ -274,6 +280,20 @@ class Luders3Fitter(BaseFitter):
         )
         self.results_by_num[num] = payload
         return payload
+
+    def refit_frame(self, file_index: int) -> FitStepPayload:
+        """Step 4 repair with the pass settings (backward / forward) that apply to this frame."""
+        num_val = self.files[file_index][0]
+        in_band = self.undeform_initial < num_val < self.undeform_end
+        if num_val <= self.target_num:
+            self.scale, self.fixed_ratio, self.fixed_ratio2 = 0, 1, 0
+            self._pass_update_list = self.backward_update_list
+            self.params_to_update = [] if in_band else list(PARAM_NAMES)
+        else:
+            self.scale, self.fixed_ratio, self.fixed_ratio2 = 1, 1, 0
+            self._pass_update_list = self.forward_update_list
+            self.params_to_update = [] if in_band else ["amplitude", "sigma", "gamma"]
+        return self.fit_one_file(file_index, completed_count=1)
 
     def run_all(self, step_callback: Optional[Callable[[FitStepPayload], None]] = None) -> Dict[str, Any]:
         if self.target_num < self.dimt_onset_num:

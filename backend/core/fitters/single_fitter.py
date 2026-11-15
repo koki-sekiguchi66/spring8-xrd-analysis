@@ -58,6 +58,8 @@ class SinglePeakFitter(BaseFitter):
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 0.7,
         max_attempts: int = 5,
+        fit_y0: bool = False,
+        y0_init: float = 0.0,
     ) -> None:
         peaks_list = [peak] if isinstance(peak, str) else list(peak)
         c0 = float(init_params["v1_center"])
@@ -75,6 +77,8 @@ class SinglePeakFitter(BaseFitter):
             update_list=update_list,
             residual_limit=residual_limit,
             max_attempts=max_attempts,
+            fit_y0=fit_y0,
+            y0_init=y0_init,
         )
         self.dimt_onset_num = int(dimt_onset_num)
         self.suppress_before_onset = bool(suppress_before_onset)
@@ -137,6 +141,7 @@ class SinglePeakFitter(BaseFitter):
                 mod += vm
                 pars.update(p)
 
+        mod, pars = self.attach_y0(mod, pars, In)
         out = mod.fit(In, pars, x=th, method="leastsq")
         comps = out.eval_components(x=th)
         residual_mean = float(np.sqrt(np.mean(out.residual ** 2)))
@@ -169,6 +174,7 @@ class SinglePeakFitter(BaseFitter):
 
         # Carry the fitted parameters to the next frame (suppressed peaks keep their previous state)
         self.prev_integral = self.current_integral
+        y0_val = self.carry_y0(out)
         for r in range(1, self.n + 1):
             if (r - 1) in suppressed_idx:
                 best_pars[f"v{r}_amplitude"] = 0.0
@@ -177,7 +183,7 @@ class SinglePeakFitter(BaseFitter):
                 self.prev_params[nm][r - 1] = best_pars[f"v{r}_{nm}"]
                 self.Init_pars[f"v{r}_{nm}"] = best_pars[f"v{r}_{nm}"]
 
-        row_data = self.build_row_dict(num, best_pars, residual=relative_residual)
+        row_data = self.build_row_dict(num, best_pars, residual=relative_residual, y0=y0_val)
         comp_lists = {self.peaks[r - 1]: comps.get(f"v{r}_", np.zeros_like(th)).tolist() for r in range(1, self.n + 1)}
         payload = FitStepPayload(
             group_id=self.group_id,
