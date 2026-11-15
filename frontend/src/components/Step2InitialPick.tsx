@@ -18,6 +18,7 @@ import { TextInput, UnitNumberInput } from './ui/Field';
 import { StatusBadge } from './ui/StatusBadge';
 import { Notice } from './ui/Notice';
 import { apiPost, fmtFixed } from '../lib/utils';
+import { ENGINE_RUN_DEFAULTS } from '../lib/engineDefaults';
 import type {
   CandidateFitResult,
   CandidateGroup,
@@ -270,12 +271,11 @@ export const Step2InitialPick: React.FC<Step2InitialPickProps> = ({
         undeform_end: 275,
         R: Number((p2Amp / p1Amp).toFixed(4)),
         R2: 3.45,
-        residual_limit: g.category === 'single' ? 0.7 : 180.0,
-        max_attempts: 5,
+        ...ENGINE_RUN_DEFAULTS[(g.peaks.length === 1 ? '1Peak' : g.default_engine) as GroupBatchConfig['engine']],
         newly_forms_peak: g.peaks
           .map((pk, idx) => (pk.startsWith('bcc') ? idx : -1))
           .filter((idx) => idx >= 0),
-        use_bcc211_constraint: true,
+        use_bcc211_constraint: false,
         bcc110_center_tol_deg: 0.05,
       });
     }

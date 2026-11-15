@@ -397,6 +397,8 @@ def export_fitting_results_excel(
         str(item.get("sheet_name") or "".join(item["peaks"])): {
             "peaks": item["peaks"],
             "rows": item["rows"].to_dict(orient="records") if isinstance(item["rows"], pd.DataFrame) else item["rows"],
+            "engine": item.get("engine"),
+            "dimt_onset_num": item.get("dimt_onset_num"),
         }
         for item in sheet_results
     }

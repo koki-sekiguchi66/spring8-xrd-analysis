@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -40,12 +40,22 @@ class GroupBatchConfig(BaseModel):
     dimt_onset_num: int = 200
     undeform_initial: int = 200
     undeform_end: int = 275
+    final_num: Optional[int] = None
     R: float = 0.52
     R2: float = 3.45
-    residual_limit: float = 0.7
-    max_attempts: int = 5
+    # None -> engine default of Harada's original script
+    # (1Peak: 0.7 relative RMS, MultiPeaks: 60 MAE, 2PeaksRatio: 200 RMS, 3PeaksLuders: 350 MAE)
+    residual_limit: Optional[float] = None
+    max_attempts: Optional[int] = None
     newly_forms_peak: Optional[List[int]] = None
-    use_bcc211_constraint: bool = True
+    min_peak_separation: float = 0.5
+    suppress_before_onset: bool = False
+    initial_ep_region: int = 1
+    end_ep_region: int = 120
+    num_init_val_set: int = 5
+    vib_ratio_fine: float = 0.1
+    v3_center_cap: float = 11.65
+    use_bcc211_constraint: bool = False
     bcc110_center_tol_deg: float = 0.05
     default_fit_limits: Optional[Dict[str, Dict[str, float]]] = None
 
@@ -103,8 +113,12 @@ class PhysicsAnalysisRequest(BaseModel):
     groups: Optional[Dict[str, Any]] = None
     wavelength_nm: Optional[float] = None
     instrumental_fwhm_deg: float = 0.018
-    a_gamma0_nm: float = 0.3595
-    a_alpha0_nm: float = 0.2868
+    a_gamma0_nm: float = 0.3588
+    a_alpha0_nm: float = 0.2905
+    include_peaks: Optional[List[str]] = None
+    exclude_peaks: Optional[List[str]] = None
+    kinetics_max_num: Optional[int] = None
+    zero_alpha_before_num: Optional[int] = None
 
 
 def _build_init_params_from_config(cfg: GroupBatchConfig) -> Dict[str, float]:
@@ -161,14 +175,30 @@ def _extract_bcc211_guide_from_session(session_groups: Dict[str, Any]) -> Dict[i
     return guide
 
 
+ENGINE_DEFAULTS: Dict[str, Dict[str, float]] = {
+    "1Peak": {"residual_limit": 0.7, "max_attempts": 5},
+    "MultiPeaks": {"residual_limit": 60.0, "max_attempts": 10},
+    "2PeaksRatio": {"residual_limit": 200.0, "max_attempts": 10},
+    "3PeaksLuders": {"residual_limit": 350.0, "max_attempts": 5},
+}
+
+
+def _engine_of(cfg: GroupBatchConfig) -> str:
+    return "1Peak" if (cfg.engine == "1Peak" or len(cfg.peaks) == 1) else cfg.engine
+
+
 def _instantiate_fitter(
     bcg_dir: Path,
     cfg: GroupBatchConfig,
     bcc211_guide_by_num: Optional[Dict[int, Dict[str, float]]] = None,
 ):
     init_pars = _build_init_params_from_config(cfg)
-    eng = cfg.engine
-    if eng == "1Peak" or len(cfg.peaks) == 1:
+    eng = _engine_of(cfg)
+    defaults = ENGINE_DEFAULTS.get(eng, ENGINE_DEFAULTS["MultiPeaks"])
+    residual_limit = float(cfg.residual_limit) if cfg.residual_limit is not None else defaults["residual_limit"]
+    max_attempts = int(cfg.max_attempts) if cfg.max_attempts is not None else int(defaults["max_attempts"])
+
+    if eng == "1Peak":
         return SinglePeakFitter(
             bcg_dir=bcg_dir,
             peak=cfg.peaks[0],
@@ -179,9 +209,10 @@ def _instantiate_fitter(
             th_min=cfg.th_min,
             th_max=cfg.th_max,
             dimt_onset_num=cfg.dimt_onset_num,
+            suppress_before_onset=cfg.suppress_before_onset,
             default_fit_limits=cfg.default_fit_limits,
-            residual_limit=cfg.residual_limit,
-            max_attempts=cfg.max_attempts,
+            residual_limit=residual_limit,
+            max_attempts=max_attempts,
         )
     if eng == "2PeaksRatio":
         return Ratio2Fitter(
@@ -194,12 +225,13 @@ def _instantiate_fitter(
             th_min=cfg.th_min,
             th_max=cfg.th_max,
             dimt_onset_num=cfg.dimt_onset_num,
-            use_bcc211_constraint=cfg.use_bcc211_constraint,
-            bcc110_center_tol_deg=cfg.bcc110_center_tol_deg,
-            bcc211_guide_by_num=bcc211_guide_by_num,
+            initial_ep_region=cfg.initial_ep_region,
+            end_ep_region=cfg.end_ep_region,
+            num_init_val_set=cfg.num_init_val_set,
+            vib_ratio_fine=cfg.vib_ratio_fine,
             default_fit_limits=cfg.default_fit_limits,
-            residual_limit=max(10.0, cfg.residual_limit),
-            max_attempts=cfg.max_attempts,
+            residual_limit=residual_limit,
+            max_attempts=max_attempts,
         )
     if eng == "3PeaksLuders":
         return Luders3Fitter(
@@ -207,16 +239,18 @@ def _instantiate_fitter(
             peaks=cfg.peaks if len(cfg.peaks) == 3 else ["fcc111a", "bcc110a", "bcc1102"],
             init_params=init_pars,
             group_id=cfg.group_id,
-            th_min=cfg.th_min or 10.6,
-            th_max=cfg.th_max or 12.3,
+            th_min=cfg.th_min if cfg.th_min is not None else 10.6,
+            th_max=cfg.th_max if cfg.th_max is not None else 12.3,
             dimt_onset_num=cfg.dimt_onset_num,
             undeform_initial=cfg.undeform_initial,
             undeform_end=cfg.undeform_end,
+            final_num=cfg.final_num,
             R=cfg.R,
             R2=cfg.R2,
+            v3_center_cap=cfg.v3_center_cap,
             default_fit_limits=cfg.default_fit_limits,
-            residual_limit=max(20.0, cfg.residual_limit),
-            max_attempts=cfg.max_attempts,
+            residual_limit=residual_limit,
+            max_attempts=max_attempts,
         )
     return MultiPeakFitter(
         bcg_dir=bcg_dir,
@@ -227,12 +261,13 @@ def _instantiate_fitter(
         th_max=cfg.th_max,
         dimt_onset_num=cfg.dimt_onset_num,
         newly_forms_peak=cfg.newly_forms_peak,
+        min_peak_separation=cfg.min_peak_separation,
         use_bcc211_constraint=cfg.use_bcc211_constraint,
         bcc110_center_tol_deg=cfg.bcc110_center_tol_deg,
         bcc211_guide_by_num=bcc211_guide_by_num,
         default_fit_limits=cfg.default_fit_limits,
-        residual_limit=max(10.0, cfg.residual_limit),
-        max_attempts=cfg.max_attempts,
+        residual_limit=residual_limit,
+        max_attempts=max_attempts,
     )
 
 
@@ -258,6 +293,8 @@ def export_session_to_analyzed_directory(
                 "sheet_name": grec.get("sheet_name") or "".join(grec["peaks"]),
                 "peaks": grec["peaks"],
                 "rows": grec["rows"],
+                "engine": grec.get("engine"),
+                "dimt_onset_num": grec.get("dimt_onset_num"),
                 "best_R": grec.get("best_R"),
                 "history_R": grec.get("history_R"),
                 "history_residual": grec.get("history_residual"),
@@ -301,6 +338,7 @@ async def ws_fitting_run(websocket: WebSocket) -> None:
                 "total_groups": total_groups,
                 "group_id": cfg.group_id,
                 "engine": fitter.engine_name,
+                "dimt_onset_num": cfg.dimt_onset_num,
                 "peaks": fitter.peaks,
                 "total_files": n_files,
             })
@@ -345,6 +383,7 @@ async def ws_fitting_run(websocket: WebSocket) -> None:
                 "group_id": cfg.group_id,
                 "sheet_name": "".join(fitter.peaks),
                 "engine": fitter.engine_name,
+                "dimt_onset_num": cfg.dimt_onset_num,
                 "peaks": fitter.peaks,
                 "th_min": fitter.th_min,
                 "th_max": fitter.th_max,
@@ -361,6 +400,7 @@ async def ws_fitting_run(websocket: WebSocket) -> None:
                 "group_id": cfg.group_id,
                 "sheet_name": "".join(fitter.peaks),
                 "engine": fitter.engine_name,
+                "dimt_onset_num": cfg.dimt_onset_num,
                 "peaks": fitter.peaks,
                 "th_min": round(fitter.th_min, 4),
                 "th_max": round(fitter.th_max, 4),
@@ -427,6 +467,7 @@ async def api_fitting_run_sync(req: BatchRunRequest) -> Dict[str, Any]:
             "group_id": cfg.group_id,
             "sheet_name": "".join(fitter.peaks),
             "engine": fitter.engine_name,
+            "dimt_onset_num": cfg.dimt_onset_num,
             "peaks": fitter.peaks,
             "th_min": fitter.th_min,
             "th_max": fitter.th_max,
@@ -441,6 +482,7 @@ async def api_fitting_run_sync(req: BatchRunRequest) -> Dict[str, Any]:
             "group_id": cfg.group_id,
             "sheet_name": "".join(fitter.peaks),
             "engine": fitter.engine_name,
+            "dimt_onset_num": cfg.dimt_onset_num,
             "peaks": fitter.peaks,
             "th_min": round(fitter.th_min, 4),
             "th_max": round(fitter.th_max, 4),
@@ -781,6 +823,10 @@ async def api_physics_analysis(req: PhysicsAnalysisRequest) -> Dict[str, Any]:
             instrumental_fwhm_deg=req.instrumental_fwhm_deg,
             a_gamma0_nm=req.a_gamma0_nm,
             a_alpha0_nm=req.a_alpha0_nm,
+            include_peaks=req.include_peaks,
+            exclude_peaks=req.exclude_peaks,
+            kinetics_max_num=req.kinetics_max_num,
+            zero_alpha_before_num=req.zero_alpha_before_num,
         )
         return {
             "status": "ok",

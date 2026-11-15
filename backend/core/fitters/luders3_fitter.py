@@ -1,19 +1,31 @@
 # -*- coding: utf-8 -*-
-"""3-Peak Lüders post-deformation continuous fitter (`fitting_3peaks_afterLuders_csv_ver4.py` equivalent).
+"""3-peak post-onset fitter for cold-rolled specimens with Lueders deformation.
 
-Fixes all 3 bugs in Section 4 (#2) of Implementation Plan:
-- Bug #2-1: Added missing `else:` branch when `scale == 0` so `k == 2` / `k == 3` fixed ratio
-  constraints are not overwritten by an unconditional `pars[f'v{k}_amplitude'].set(...)`.
-- Bug #2-2: Fixed typo `value=R * scaled_amplitude_guess[0]` -> `value=R2 * scaled_amplitude_guess[0]`
-  when `scale == 1` and `k == 3`.
-- Bug #2-3: Explicitly initialized `fixed_ratio2 = 0` at the start of loops so `i == undeform_initial`
-  never encounters an undefined variable.
-- Preserves the `v2_delta` breakwater variable (`v2_center = v1_center + v2_delta`, `min=0.1`).
+Faithful port of Harada's `fitting_3peaks_afterLuders_csv_ver4.py`:
+- Peaks: `fcc111a` (gamma 111), `bcc110a` (pre-existing alpha' 110, amplitude tied to fcc111 by the
+  ratio R obtained with the 2-peak ratio engine), `bcc1102` (alpha' 110 newly formed by DIMT).
+- Fixed window `[10.6, 12.3]` deg of the background-removed data, Voigt components only.
+- `v2_center = v1_center + v2_delta` with `v2_delta >= 0.1` deg ("breakwater").
+- `v3_center <= v3_center_cap` (11.65 deg in ver4) and at least 0.02 deg above v2.
+- Backward pass `target -> DIMT_onset_num` (the region before the onset is fitted by the 2-peak ratio
+  engine), then a reset to the initial values and a forward pass `target + 1 -> final_num`.
+- Inside the Lueders band window `undeform_initial < num < undeform_end` (no deformation at the X-ray
+  position) the parameters are not carried over.
+- Forward pass: only amplitude/sigma/gamma are carried over (centers stay referenced to the initial
+  values), plus the v3 center and amplitude.
+- Pass-specific `update_list`s of ver4 are the defaults; residual = mean(|residual|), limit 350.
+
+Bug fixes relative to ver4 (logic only):
+- #2-1 With `scale == 0` an unconditional `.set()` after the `if/elif` overwrote the R-tied bounds of
+  peak 2; it is now in an `else` branch.
+- #2-2 `value=R * scaled[0]` for peak 3 with `fixed_ratio2 == 1` -> `R2 * scaled[0]`.
+- #2-3 `fixed_ratio2` initialised before the loops.
+- Best attempt kept in the retry loop; fixed seeds; unified columns.
+The specimen-specific hand corrections of ver4 (`if i < 220: v3_center -= 0.008`) are not ported.
 """
 
 from __future__ import annotations
 
-import copy
 import random
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -22,6 +34,30 @@ import numpy as np
 from lmfit.models import VoigtModel
 
 from .base_fitter import PARAM_NAMES, BaseFitter, FitStepPayload
+
+_PRE_FIT_PERTURB = {"center": (-0.0015, 0.005), "amplitude": (0.999, 1.001), "sigma": (0.99999, 1.00001), "gamma": (0.99999, 1.00001)}
+_RETRY_PERTURB = {"amplitude": (0.995, 1.005)}
+
+# ver4 pass-specific update lists
+BACKWARD_UPDATE_LIST: List[Tuple[str, str, float]] = [
+    ("v1", "amplitude_min_factor", 0.95), ("v1", "amplitude_max_factor", 1.00005),
+    ("v1", "sigma_max_factor", 1.001), ("v1", "gamma_max_factor", 1.001),
+    ("v2", "amplitude_min_factor", 0.97), ("v2", "amplitude_max_factor", 1.05),
+    ("v2", "center_min_offset", -0.00001), ("v2", "center_max_offset", 0.025),
+    ("v3", "center_min_offset", -0.008), ("v3", "amplitude_min_factor", 0.95),
+    ("v3", "amplitude_min_offset", -50.0), ("v3", "center_max_offset", 0.003),
+]
+FORWARD_UPDATE_LIST: List[Tuple[str, str, float]] = [
+    ("v1", "center_min_offset", -0.002), ("v1", "center_max_offset", 0.005),
+    ("v1", "amplitude_max_factor", 1.02), ("v1", "amplitude_min_factor", 0.97),
+    ("v1", "sigma_max_factor", 1.003), ("v1", "gamma_max_factor", 1.001),
+    ("v2", "amplitude_min_factor", 0.98), ("v2", "amplitude_max_factor", 1.02),
+    ("v2", "amplitude_max_offset", 5.0), ("v2", "center_min_offset", -0.001),
+    ("v2", "center_max_offset", 0.005), ("v3", "amplitude_min_factor", 0.9),
+    ("v3", "amplitude_max_factor", 1.05), ("v3", "amplitude_max_offset", 200.0),
+    ("v3", "center_max_offset", 0.002), ("v3", "center_min_offset", -0.015),
+    ("v2", "sigma_min_factor", 0.97), ("v2", "gamma_min_factor", 0.97),
+]
 
 
 class Luders3Fitter(BaseFitter):
@@ -38,9 +74,13 @@ class Luders3Fitter(BaseFitter):
         dimt_onset_num: int = 180,
         undeform_initial: int = 200,
         undeform_end: int = 275,
+        final_num: Optional[int] = None,
         R: float = 0.52,
         R2: float = 3.45,
         v2_delta_min: float = 0.1,
+        v3_center_cap: float = 11.65,
+        backward_update_list: Optional[List[Tuple[str, str, float]]] = None,
+        forward_update_list: Optional[List[Tuple[str, str, float]]] = None,
         default_fit_limits: Optional[Dict[str, Dict[str, float]]] = None,
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 350.0,
@@ -48,66 +88,19 @@ class Luders3Fitter(BaseFitter):
     ) -> None:
         peaks_list = list(peaks) if peaks and len(peaks) == 3 else ["fcc111a", "bcc110a", "bcc1102"]
 
-        # Synthesize 3rd peak initial values if user passed a 2-peak initial set
         norm_init = dict(init_params)
         if "v3_center" not in norm_init:
+            # Only a 2-peak initial set was supplied: start the new bcc110 component slightly above v2
             norm_init["v3_center"] = float(norm_init.get("v2_center", 11.51)) + 0.08
             norm_init["v3_amplitude"] = max(10.0, float(norm_init.get("v2_amplitude", 500.0)) * 0.25)
-            norm_init["v3_sigma"] = float(norm_init.get("v2_sigma", 0.08))
-            norm_init["v3_gamma"] = float(norm_init.get("v2_gamma", 0.04))
-
-        # Item 4: Expand default per-frame parameter variation limits (amplitude: 0.80~1.25, sigma & gamma: 0.70~1.40)
-        if default_fit_limits is None:
-            default_fit_limits = {
-                "v1": {
-                    "center_min_offset": -0.01,
-                    "center_max_offset": 0.005,
-                    "amplitude_min_factor": 0.80,
-                    "amplitude_max_factor": 1.25,
-                    "amplitude_min_offset": 0.0,
-                    "amplitude_max_offset": 10.0,
-                    "sigma_min_factor": 0.70,
-                    "sigma_max_factor": 1.40,
-                    "sigma_min_offset": 0.0,
-                    "sigma_max_offset": 1e-10,
-                    "gamma_min_factor": 0.70,
-                    "gamma_max_factor": 1.40,
-                    "gamma_min_offset": 0.0,
-                    "gamma_max_offset": 1e-10,
-                },
-                "v2": {
-                    "center_min_offset": -0.01,
-                    "center_max_offset": 0.01,
-                    "amplitude_min_factor": 0.80,
-                    "amplitude_max_factor": 1.25,
-                    "amplitude_min_offset": 0.0,
-                    "amplitude_max_offset": 10.0,
-                    "sigma_min_factor": 0.70,
-                    "sigma_max_factor": 1.40,
-                    "sigma_min_offset": 0.0,
-                    "sigma_max_offset": 1e-10,
-                    "gamma_min_factor": 0.70,
-                    "gamma_max_factor": 1.40,
-                    "gamma_min_offset": 0.0,
-                    "gamma_max_offset": 1e-10,
-                },
-                "v3": {
-                    "center_min_offset": -0.03,
-                    "center_max_offset": 0.08,
-                    "amplitude_min_factor": 0.80,
-                    "amplitude_max_factor": 1.25,
-                    "amplitude_min_offset": 0.0,
-                    "amplitude_max_offset": 50.0,
-                    "sigma_min_factor": 0.70,
-                    "sigma_max_factor": 1.40,
-                    "sigma_min_offset": 0.0,
-                    "sigma_max_offset": 1e-10,
-                    "gamma_min_factor": 0.70,
-                    "gamma_max_factor": 1.40,
-                    "gamma_min_offset": 0.0,
-                    "gamma_max_offset": 1e-10,
-                },
-            }
+            if "v2_sigma" in norm_init:
+                norm_init["v3_sigma"] = float(norm_init["v2_sigma"])
+            else:
+                norm_init["v3_wG"] = float(norm_init.get("v2_wG", 0.19))
+            if "v2_gamma" in norm_init:
+                norm_init["v3_gamma"] = float(norm_init["v2_gamma"])
+            else:
+                norm_init["v3_wL"] = float(norm_init.get("v2_wL", 0.08))
 
         super().__init__(
             bcg_dir=bcg_dir,
@@ -125,15 +118,54 @@ class Luders3Fitter(BaseFitter):
         self.dimt_onset_num = int(dimt_onset_num)
         self.undeform_initial = int(undeform_initial)
         self.undeform_end = int(undeform_end)
+        self.final_num = int(final_num) if final_num is not None else None
         self.R = float(R)
         self.R2 = float(R2)
-        self.v2_delta_min = max(0.02, float(v2_delta_min))
+        self.v2_delta_min = float(v2_delta_min)
+        self.v3_center_cap = float(v3_center_cap)
+        self.backward_update_list = list(backward_update_list) if backward_update_list is not None else list(BACKWARD_UPDATE_LIST)
+        self.forward_update_list = list(forward_update_list) if forward_update_list is not None else list(FORWARD_UPDATE_LIST)
+        self._pass_update_list: List[Tuple[str, str, float]] = []
 
-        # Bug #2-3 fix: Explicitly initialize fixed_ratio and fixed_ratio2
+        # Bug #2-3 fix: initialise the switches explicitly
         self.fixed_ratio: int = 1
         self.fixed_ratio2: int = 0
         self.scale: int = 0
-        self.params_to_update: List[str] = ["center", "amplitude", "sigma", "gamma"]
+        self.params_to_update: List[str] = list(PARAM_NAMES)
+
+    def _default_limits(self) -> Dict[str, Dict[str, float]]:
+        """ver4 `default_fit_limits`."""
+        return {
+            "v1": {
+                "center_min_offset": -0.01, "center_max_offset": 0.002,
+                "amplitude_min_factor": 0.95, "amplitude_max_factor": 1.05,
+                "amplitude_min_offset": 0.0, "amplitude_max_offset": 10.0,
+                "sigma_min_factor": 0.99, "sigma_max_factor": 1.1, "sigma_max_offset": 1e-15,
+                "gamma_min_factor": 0.99, "gamma_max_factor": 1.01, "gamma_max_offset": 1e-15,
+            },
+            "v2": {
+                "center_min_offset": -0.01, "center_max_offset": 0.01,
+                "amplitude_min_factor": 0.9, "amplitude_max_factor": 1.1,
+                "amplitude_min_offset": 0.0, "amplitude_max_offset": 10.0,
+                "sigma_min_factor": 0.99, "sigma_max_factor": 1.01, "sigma_max_offset": 1e-15,
+                "gamma_min_factor": 0.99, "gamma_max_factor": 1.001, "gamma_max_offset": 1e-10,
+            },
+            "v3": {
+                "center_min_offset": -0.03, "center_max_offset": 0.08,
+                "amplitude_min_factor": 0.9, "amplitude_max_factor": 1.1,
+                "amplitude_min_offset": 20.0, "amplitude_max_offset": 10.0,
+                "sigma_min_factor": 0.9, "sigma_max_factor": 1.005, "sigma_max_offset": 1e-15,
+                "gamma_min_factor": 0.9, "gamma_max_factor": 1.005, "gamma_max_offset": 1e-10,
+            },
+        }
+
+    def get_effective_limits(self) -> Dict[str, Dict[str, float]]:
+        # ver4 replaces `update_list` per pass; a user `update_list` is applied on top
+        return self.merge_limits(self.merge_limits(self.default_fit_limits, self._pass_update_list), self.update_list)
+
+    def _amp_bounds(self, base_a: float, lim: Dict[str, float]) -> Tuple[float, float]:
+        a_min = max(0.0, base_a * lim["amplitude_min_factor"] + lim.get("amplitude_min_offset", 0.0))
+        return self.bounded(a_min, base_a * lim["amplitude_max_factor"] + lim.get("amplitude_max_offset", 0.0), 1.0)
 
     def _perform_fitting_once(
         self,
@@ -142,189 +174,84 @@ class Luders3Fitter(BaseFitter):
         cand_pars: Dict[str, float],
         num_val: int,
     ) -> Tuple[Any, Dict[str, np.ndarray], float, float]:
-        fit_limits = self.get_effective_limits()
-        scaled_amplitude_guess = [
-            max(0.0, amp * self.intensity_scale_factor) for amp in self.prev_params["amplitude"]
-        ]
+        lim_all = self.get_effective_limits()
+        prev = self.prev_params
+        scaled = [amp * self.intensity_scale_factor for amp in prev["amplitude"]]
 
         mod = VoigtModel(prefix="v1_") + VoigtModel(prefix="v2_") + VoigtModel(prefix="v3_")
         pars = mod.make_params()
 
-        for k in range(1, self.n + 1):
-            lim = fit_limits[f"v{k}"]
-            is_v3_suppressed = (k == 3 and self.dimt_onset_num > 0 and num_val < self.dimt_onset_num)
+        for k in (1, 2, 3):
+            lim = lim_all[f"v{k}"]
             if k == 1:
-                c_min = self.prev_params["center"][0] + lim.get("center_min_offset", -0.01)
-                c_max = self.prev_params["center"][0] + lim.get("center_max_offset", 0.005)
-                if c_min >= c_max:
-                    c_max = c_min + 0.01
-                c_val = min(max(cand_pars["v1_center"], c_min + 1e-6), c_max - 1e-6)
-                pars["v1_center"].set(value=c_val, min=c_min, max=c_max, vary=True)
+                c_min, c_max = self.bounded(prev["center"][0] + lim["center_min_offset"], prev["center"][0] + lim["center_max_offset"], 0.005)
+                pars["v1_center"].set(value=float(np.clip(cand_pars["v1_center"], c_min, c_max)), min=c_min, max=c_max, vary=True)
             elif k == 2:
-                # Breakwater logic: v2_center = v1_center + v2_delta with v2_delta >= v2_delta_min (0.1 deg)
-                init_delta = max(self.v2_delta_min, cand_pars["v2_center"] - cand_pars["v1_center"])
-                pars.add("v2_delta", value=init_delta, min=self.v2_delta_min, max=2.0, vary=True)
+                # Breakwater: v2 stays at least v2_delta_min above v1 while following it
+                delta0 = max(self.v2_delta_min, min(2.0, cand_pars["v2_center"] - cand_pars["v1_center"]))
+                pars.add("v2_delta", value=delta0, min=self.v2_delta_min, max=2.0, vary=True)
                 pars["v2_center"].set(expr="v1_center + v2_delta")
             else:
-                init_spacing = abs(self.base_init_pars["v3_center"] - self.base_init_pars["v2_center"])
-                min_sep = min(0.03, max(0.005, 0.30 * init_spacing))
-                c_min = max(
-                    self.prev_params["center"][k - 2] + min_sep,
-                    self.prev_params["center"][k - 1] + lim.get("center_min_offset", -0.03),
-                )
-                c_max = min(self.prev_params["center"][k - 1] + lim.get("center_max_offset", 0.08), 11.85)
-                # Item 2: Strict guard right before .set(min=..., max=...)
-                if c_min >= c_max:
-                    c_max = c_min + max(0.02, min_sep)
-                c_val = min(max(cand_pars[f"v{k}_center"], c_min + 1e-6), c_max - 1e-6)
-                pars[f"v{k}_center"].set(value=c_val, min=c_min, max=c_max, vary=not is_v3_suppressed)
+                c_lo = max(prev["center"][1] + 0.02, prev["center"][2] + lim["center_min_offset"])
+                c_hi = min(prev["center"][2] + lim["center_max_offset"], self.v3_center_cap)
+                c_min, c_max = self.bounded(c_lo, c_hi, 0.005)
+                pars["v3_center"].set(value=float(np.clip(cand_pars["v3_center"], c_min, c_max)), min=c_min, max=c_max, vary=True)
 
-            # Amplitude setting with Bug #2-1 (missing else), Bug #2-2 (R2 typo), and Item 5 (pre-onset 0 fix)
-            if is_v3_suppressed:
-                pars["v3_amplitude"].set(value=0.0, min=0.0, max=1e-9, vary=False, expr=None)
-            elif self.scale == 0:
+            if self.scale == 0:
                 if k == 2 and self.fixed_ratio == 1:
-                    base_a = self.R * self.prev_params["amplitude"][0]
-                    a_min = max(0.0, base_a * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-                    a_max = max(a_min + 1.0, base_a * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-                    pars[f"v{k}_amplitude"].set(
-                        value=min(max(cand_pars[f"v{k}_amplitude"], a_min), a_max),
-                        min=a_min,
-                        max=a_max,
-                        vary=True,
-                    )
+                    a_min, a_max = self._amp_bounds(self.R * prev["amplitude"][0], lim)
                 elif k == 3 and self.fixed_ratio2 == 1:
-                    base_a = self.R2 * self.prev_params["amplitude"][0]
-                    a_min = max(0.0, base_a * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-                    a_max = max(a_min + 1.0, base_a * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-                    pars[f"v{k}_amplitude"].set(
-                        value=min(max(cand_pars[f"v{k}_amplitude"], a_min), a_max),
-                        min=a_min,
-                        max=a_max,
-                        vary=True,
-                    )
-                else:
-                    # Bug #2-1 fix: Placed inside `else:` so k==2/k==3 fixed ratio is NOT overwritten!
-                    base_a = self.prev_params["amplitude"][k - 1]
-                    a_min = max(0.0, base_a * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-                    a_max = max(a_min + 1.0, base_a * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-                    pars[f"v{k}_amplitude"].set(
-                        value=min(max(cand_pars[f"v{k}_amplitude"], a_min), a_max),
-                        min=a_min,
-                        max=a_max,
-                        vary=True,
-                    )
+                    a_min, a_max = self._amp_bounds(self.R2 * prev["amplitude"][0], lim)
+                else:  # Bug #2-1 fix
+                    a_min, a_max = self._amp_bounds(prev["amplitude"][k - 1], lim)
+                a_val = cand_pars[f"v{k}_amplitude"]
             else:
                 if k == 2 and self.fixed_ratio == 1:
-                    base_a = self.R * scaled_amplitude_guess[0]
-                    a_min = max(0.0, base_a * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-                    a_max = max(a_min + 1.0, base_a * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-                    pars[f"v{k}_amplitude"].set(
-                        value=min(max(base_a, a_min), a_max),
-                        min=a_min,
-                        max=a_max,
-                        vary=True,
-                    )
+                    a_val = self.R * scaled[0]
                 elif k == 3 and self.fixed_ratio2 == 1:
-                    # Bug #2-2 fix: Use self.R2 * scaled_amplitude_guess[0] instead of R!
-                    base_a = self.R2 * scaled_amplitude_guess[0]
-                    a_min = max(0.0, base_a * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-                    a_max = max(a_min + 1.0, base_a * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-                    pars[f"v{k}_amplitude"].set(
-                        value=min(max(base_a, a_min), a_max),
-                        min=a_min,
-                        max=a_max,
-                        vary=True,
-                    )
+                    a_val = self.R2 * scaled[0]  # Bug #2-2 fix (R -> R2)
                 else:
-                    base_a = scaled_amplitude_guess[k - 1]
-                    a_min = max(0.0, base_a * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-                    a_max = max(a_min + 1.0, base_a * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-                    pars[f"v{k}_amplitude"].set(
-                        value=min(max(base_a, a_min), a_max),
-                        min=a_min,
-                        max=a_max,
-                        vary=True,
-                    )
+                    a_val = scaled[k - 1]
+                a_min, a_max = self._amp_bounds(a_val, lim)
+            pars[f"v{k}_amplitude"].set(value=float(np.clip(a_val, a_min, a_max)), min=a_min, max=a_max, vary=True)
 
-            s_prev = self.prev_params["sigma"][k - 1]
-            s_min = max(1e-6, s_prev * lim.get("sigma_min_factor", 0.70))
-            s_max = max(s_min + 1e-5, s_prev * lim.get("sigma_max_factor", 1.40) + lim.get("sigma_max_offset", 1e-10))
-            pars[f"v{k}_sigma"].set(
-                value=min(max(cand_pars[f"v{k}_sigma"], s_min), s_max),
-                min=s_min,
-                max=s_max,
-                vary=not is_v3_suppressed,
-            )
+            s_min, s_max = self.bounded(max(1e-6, prev["sigma"][k - 1] * lim["sigma_min_factor"]), prev["sigma"][k - 1] * lim["sigma_max_factor"] + lim.get("sigma_max_offset", 0.0), 1e-6)
+            g_min, g_max = self.bounded(max(0.0, prev["gamma"][k - 1] * lim["gamma_min_factor"]), prev["gamma"][k - 1] * lim["gamma_max_factor"] + lim.get("gamma_max_offset", 0.0), 1e-6)
+            pars[f"v{k}_sigma"].set(value=float(np.clip(cand_pars[f"v{k}_sigma"], s_min, s_max)), min=s_min, max=s_max, vary=True)
+            pars[f"v{k}_gamma"].set(value=float(np.clip(cand_pars[f"v{k}_gamma"], g_min, g_max)), min=g_min, max=g_max, vary=True, expr=None)
 
-            g_prev = self.prev_params["gamma"][k - 1]
-            g_min = max(1e-10, g_prev * lim.get("gamma_min_factor", 0.70))
-            g_max = max(g_min + 1e-5, g_prev * lim.get("gamma_max_factor", 1.40) + lim.get("gamma_max_offset", 1e-10))
-            pars[f"v{k}_gamma"].set(
-                value=min(max(cand_pars[f"v{k}_gamma"], g_min), g_max),
-                min=g_min,
-                max=g_max,
-                vary=not is_v3_suppressed,
-                expr=None,
-            )
-
-        out = mod.fit(In, pars, x=th, method="leastsq", max_nfev=1000)
+        out = mod.fit(In, pars, x=th, method="leastsq")
         comps = out.eval_components(x=th)
         residual_mean = float(np.mean(np.abs(out.residual)))
-        mean_abs_in = max(1e-6, float(np.mean(np.abs(In))))
-        relative_residual = residual_mean / mean_abs_in
+        relative_residual = residual_mean / max(1e-12, float(np.mean(np.abs(In))))
         return out, comps, residual_mean, relative_residual
 
     def fit_one_file(self, file_index: int, completed_count: int) -> FitStepPayload:
-        # Item 7-2: Fixed random seed for 100% deterministic reproducibility
         random.seed(42)
         np.random.seed(42)
-
         num, fname, th, In = self.load_window_data(file_index)
 
-        out, comps, residual_mean, relative_residual = self._perform_fitting_once(th, In, self.Init_pars, num)
-        prev_residual = residual_mean
-        best_out = out
-        best_comps = comps
-        best_rel_res = relative_residual
-        best_pars = {
-            f"v{r}_{name}": float(out.best_values.get(f"v{r}_{name}", self.Init_pars[f"v{r}_{name}"]))
-            for r in range(1, self.n + 1)
-            for name in PARAM_NAMES
-        }
-
+        start = self.perturb(self.Init_pars, 3, _PRE_FIT_PERTURB)
+        out, comps, residual_mean, relative_residual = self._perform_fitting_once(th, In, start, num)
+        best = (residual_mean, out, comps, relative_residual)
         attempt = 0
-        while prev_residual >= self.residual_limit and attempt < self.max_attempts:
+        while best[0] >= self.residual_limit and attempt < self.max_attempts:
             attempt += 1
-            trial_pars = copy.deepcopy(best_pars)
-            for p_idx in range(1, self.n + 1):
-                trial_pars[f"v{p_idx}_amplitude"] *= random.uniform(0.995, 1.005)
-            out_try, comps_try, res_mean_try, rel_res_try = self._perform_fitting_once(th, In, trial_pars, num)
-            if res_mean_try < prev_residual:
-                prev_residual = res_mean_try
-                best_out = out_try
-                best_comps = comps_try
-                best_rel_res = rel_res_try
-                for r in range(1, self.n + 1):
-                    for name in PARAM_NAMES:
-                        best_pars[f"v{r}_{name}"] = float(out_try.best_values.get(f"v{r}_{name}"))
-
-        if self.dimt_onset_num > 0 and num < self.dimt_onset_num:
-            best_pars["v3_amplitude"] = 0.0
+            base = {f"v{r}_{nm}": float(best[1].best_values[f"v{r}_{nm}"]) for r in (1, 2, 3) for nm in PARAM_NAMES}
+            trial = self.perturb(base, 3, _RETRY_PERTURB)
+            o2, c2, rm2, rr2 = self._perform_fitting_once(th, In, trial, num)
+            if rm2 < best[0]:
+                best = (rm2, o2, c2, rr2)
+        residual_mean, out, comps, relative_residual = best
+        best_pars = {f"v{r}_{nm}": float(out.best_values[f"v{r}_{nm}"]) for r in (1, 2, 3) for nm in PARAM_NAMES}
 
         self.prev_integral = self.current_integral
-        for name in PARAM_NAMES:
-            if name in self.params_to_update:
-                self.prev_params[name] = [float(best_pars[f"v{r}_{name}"]) for r in range(1, self.n + 1)]
-        for r in range(1, self.n + 1):
-            for name in PARAM_NAMES:
-                self.Init_pars[f"v{r}_{name}"] = self.prev_params[name][r - 1]
-
-        row_data = self.build_row_dict(num, best_pars, residual=best_rel_res)
-        comp_lists = {
-            self.peaks[r - 1]: best_comps.get(f"v{r}_", np.zeros_like(th)).tolist()
-            for r in range(1, self.n + 1)
-        }
+        for nm in PARAM_NAMES:
+            if nm in self.params_to_update:
+                self.prev_params[nm] = [best_pars[f"v{r}_{nm}"] for r in (1, 2, 3)]
+        for r in (1, 2, 3):
+            for nm in PARAM_NAMES:
+                self.Init_pars[f"v{r}_{nm}"] = self.prev_params[nm][r - 1]
 
         payload = FitStepPayload(
             group_id=self.group_id,
@@ -335,75 +262,65 @@ class Luders3Fitter(BaseFitter):
             completed_files=completed_count,
             num=num,
             filename=fname,
-            residual_rmse=prev_residual,
-            relative_residual=best_rel_res,
+            residual_rmse=residual_mean,
+            relative_residual=relative_residual,
             attempts=attempt,
-            is_outlier=bool(prev_residual >= self.residual_limit),
-            row_data=row_data,
+            is_outlier=bool(residual_mean >= self.residual_limit),
+            row_data=self.build_row_dict(num, best_pars, residual=residual_mean),
             x=th.tolist(),
             y_obs=In.tolist(),
-            y_fit=best_out.best_fit.tolist(),
-            components=comp_lists,
+            y_fit=out.best_fit.tolist(),
+            components={self.peaks[r - 1]: comps.get(f"v{r}_", np.zeros_like(th)).tolist() for r in (1, 2, 3)},
         )
         self.results_by_num[num] = payload
         return payload
 
-    def run_all(
-        self,
-        step_callback: Optional[Callable[[FitStepPayload], None]] = None,
-    ) -> Dict[str, Any]:
+    def run_all(self, step_callback: Optional[Callable[[FitStepPayload], None]] = None) -> Dict[str, Any]:
+        if self.target_num < self.dimt_onset_num:
+            raise ValueError(
+                f"3PeaksLuders は変態開始後 (num >= {self.dimt_onset_num}) の領域を解析します。"
+                f"初期値は変態開始後のファイルから選んでください (現在の初期値: num={self.target_num})。"
+            )
         self.results_by_num.clear()
         self.reset_to_initial()
         completed = 0
 
-        # Step 1: Backward from target_index down to 0
-        self.scale = 0
-        self.fixed_ratio = 1
-        self.fixed_ratio2 = 0  # Bug #2-3 fix: explicitly initialized before loop!
-
+        # Step 1: backward from the initial file down to the DIMT onset
+        self.scale, self.fixed_ratio, self.fixed_ratio2 = 0, 1, 0
+        self._pass_update_list = self.backward_update_list
         for i in reversed(range(0, self.target_index + 1)):
             num_val = self.files[i][0]
-            if num_val > self.undeform_initial:
-                self.fixed_ratio = 1
-                self.fixed_ratio2 = 0
-            else:
-                self.fixed_ratio = 1
-                self.fixed_ratio2 = 0
-
             if num_val < self.dimt_onset_num:
-                self.prev_params["amplitude"][2] = 0.0
-                self.Init_pars["v3_amplitude"] = 0.0
-
-            if self.undeform_initial < num_val < self.undeform_end:
-                self.params_to_update = []
-            else:
-                self.params_to_update = ["center", "amplitude", "sigma", "gamma"]
-
+                break
+            in_band = self.undeform_initial < num_val < self.undeform_end
+            self.params_to_update = [] if in_band else list(PARAM_NAMES)
             completed += 1
             payload = self.fit_one_file(i, completed_count=completed)
             if step_callback:
                 step_callback(payload)
 
-        # Step 2: Reset and run forward from target_index + 1 to end
+        # Step 2: reset and forward from the initial file + 1 to final_num
         self.reset_to_initial()
-        self.scale = 1
-        self.fixed_ratio = 1
-        self.fixed_ratio2 = 0
+        self.scale, self.fixed_ratio, self.fixed_ratio2 = 1, 1, 0
+        self._pass_update_list = self.forward_update_list
         prev_integral_temp = 0.0
-
         for i in range(self.target_index + 1, len(self.files)):
             num_val = self.files[i][0]
+            if self.final_num is not None and num_val >= self.final_num:
+                break
             if self.undeform_initial < num_val < self.undeform_end:
                 self.params_to_update = []
                 self.prev_integral = prev_integral_temp
             else:
                 self.params_to_update = ["amplitude", "sigma", "gamma"]
                 prev_integral_temp = self.prev_integral
-
             completed += 1
             payload = self.fit_one_file(i, completed_count=completed)
+            # ver4: the new bcc110 component always follows its own fitted amplitude and center
             self.prev_params["amplitude"][2] = float(payload.row_data.get(f"I_{self.peaks[2]}", 0.0))
             self.prev_params["center"][2] = float(payload.row_data.get(f"2th_{self.peaks[2]}", self.prev_params["center"][2]))
+            self.Init_pars["v3_amplitude"] = self.prev_params["amplitude"][2]
+            self.Init_pars["v3_center"] = self.prev_params["center"][2]
             if step_callback:
                 step_callback(payload)
 

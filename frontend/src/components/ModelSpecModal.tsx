@@ -27,19 +27,19 @@ export const ModelSpecModal: React.FC<ModelSpecModalProps> = ({ open, onClose })
       detail: 'wG / wL 独立最適化 (vary=True), Olivero-Longbothum FWHM',
     },
     {
-      title: 'Bragg 幾何拘束',
+      title: '原田スクリプト準拠',
       accent: 'text-amber-300',
-      detail: 'θ_110 = arcsin(sin(θ_211) / √3), tanθ比による半値幅拘束',
+      detail: '1Peak ver7.0 / MultiPeaks ver4.0.0 / 2PeaksRatio ver10 / 3PeaksLuders ver4, 前フレーム基準拘束・往復解析',
     },
     {
-      title: '局所BG・再現性',
+      title: '背景・再現性',
       accent: 'text-emerald-300',
-      detail: '境界10点直線BG減算, seed(42) 固定による決定論的最適化',
+      detail: '前処理 Rubberband + PCHIP のみ (窓内の背景項なし), seed(42) 固定による決定論的最適化',
     },
     {
       title: '相分率・転位密度',
       accent: 'text-[#eef0f4]',
-      detail: "多重度/LP/構造因子補正による f_α' 算出, Modified W-H 転位密度",
+      detail: "直接比較法 (Cromer-Mann・LP・DW・実測格子定数) による f_α', Modified W-H 転位密度 (半定量)",
     },
   ];
 

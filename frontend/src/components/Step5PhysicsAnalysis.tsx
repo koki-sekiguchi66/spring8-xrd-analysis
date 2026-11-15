@@ -12,7 +12,7 @@ import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
 import { Disclosure } from './ui/Disclosure';
 import { EmptyCanvas } from './ui/EmptyCanvas';
-import { FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
+import { CheckboxRow, FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
 import { MetricCell, MetricStrip } from './ui/MetricStrip';
 import { Notice } from './ui/Notice';
 import { Panel } from './ui/Panel';
@@ -40,8 +40,12 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
   const [activeSubView, setActiveSubView] = useState<PhysicsSubView>('phase_fraction');
   const [excelPath, setExcelPath] = useState<string>('');
   const [instrumentalFwhm, setInstrumentalFwhm] = useState<number>(0.018);
-  const [aGamma0, setAGamma0] = useState<number>(0.3595);
-  const [aAlpha0, setAAlpha0] = useState<number>(0.2868);
+  const [wavelengthNm, setWavelengthNm] = useState<number>(0.04133);
+  const [aGamma0, setAGamma0] = useState<number>(0.3588);
+  const [aAlpha0, setAAlpha0] = useState<number>(0.2905);
+  // '' = DIMT onset stored with the fitted groups; 0 = disabled
+  const [zeroAlphaBefore, setZeroAlphaBefore] = useState<string>('');
+  const [excludedRefl, setExcludedRefl] = useState<string[]>([]);
   const [showAdvancedParams, setShowAdvancedParams] = useState<boolean>(false);
 
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -69,7 +73,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
     }
   };
 
-  const handleRunAnalysis = async (overrideExcel?: string) => {
+  const handleRunAnalysis = async (overrideExcel?: string, overrideExcluded?: string[]) => {
     const targetExcel = (overrideExcel !== undefined ? overrideExcel : excelPath).trim();
     if (!targetExcel && !hasSessionGroups && !folderPath) {
       setErrorMsg('対象データ未指定 (Step 3 実行または output.xlsx 指定が必要)');
@@ -83,9 +87,12 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         specimen_name: specimenName || undefined,
         excel_path: targetExcel || undefined,
         groups: !targetExcel && hasSessionGroups ? batchResults : undefined,
+        wavelength_nm: wavelengthNm,
         instrumental_fwhm_deg: instrumentalFwhm,
         a_gamma0_nm: aGamma0,
         a_alpha0_nm: aAlpha0,
+        exclude_peaks: overrideExcluded ?? excludedRefl,
+        zero_alpha_before_num: zeroAlphaBefore.trim() === '' ? undefined : Number(zeroAlphaBefore),
       });
       setResult(res);
       onPhysicsComputed?.();
@@ -164,7 +171,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         y: result.kinetics_fit.fitted_curve.map((v) => v * 100),
         type: 'scatter',
         mode: 'lines',
-        name: `Olson-Cohen (n=${fmtFixed(result.kinetics_fit.n, 2)})`,
+        name: `経験式 f(num) (n=${fmtFixed(result.kinetics_fit.n, 2)})`,
         line: { color: '#34d399', width: 1.8, dash: 'dash' },
       });
     }
@@ -311,11 +318,29 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       {/* Calibration Disclosure */}
       <Disclosure
         title="装置・基準定数"
-        summary={`FWHM_inst ${instrumentalFwhm}° · a_γ0 ${aGamma0}nm · a_α'0 ${aAlpha0}nm`}
+        summary={`λ ${wavelengthNm}nm · FWHM_inst ${instrumentalFwhm}° · 除外 ${excludedRefl.length ? excludedRefl.join(',') : 'なし'}`}
         open={showAdvancedParams}
         onToggle={() => setShowAdvancedParams((v) => !v)}
       >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+          <div>
+            <FieldLabel>λ</FieldLabel>
+            <UnitNumberInput
+              unit="nm"
+              step="0.00001"
+              value={wavelengthNm}
+              onChange={(e) => setWavelengthNm(parseFloat(e.target.value) || 0)}
+            />
+          </div>
+          <div>
+            <FieldLabel>新生 α&apos; = 0 (num &lt;)</FieldLabel>
+            <UnitNumberInput
+              step="1"
+              value={zeroAlphaBefore}
+              placeholder={result ? String(result.zero_alpha_before_num ?? '') : '変態開始'}
+              onChange={(e) => setZeroAlphaBefore(e.target.value)}
+            />
+          </div>
           <div>
             <FieldLabel>FWHM_inst</FieldLabel>
             <UnitNumberInput
@@ -344,6 +369,30 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
         </div>
+        {result?.available_reflections?.length ? (
+          <div className="mt-3 space-y-1.5">
+            <FieldLabel>相分率に使う反射</FieldLabel>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+              {result.available_reflections.map((key) => (
+                <CheckboxRow
+                  key={key}
+                  checked={!excludedRefl.includes(key)}
+                  onChange={(val) => {
+                    const next = val ? excludedRefl.filter((k) => k !== key) : [...excludedRefl, key];
+                    setExcludedRefl(next);
+                    handleRunAnalysis(undefined, next);
+                  }}
+                  label={
+                    <span className="text-xs font-mono tabular-nums">
+                      {key}
+                      {result.R_values?.[key] !== undefined ? ` R=${fmtFixed(result.R_values[key], 1)}` : ''}
+                    </span>
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </Disclosure>
 
       {errorMsg && <Notice tone="error">{errorMsg}</Notice>}
@@ -378,7 +427,11 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
           value={result?.wavelength_nm ? fmtFixed(result.wavelength_nm, 5) : '—'}
           unit="nm"
           tone="emerald"
-          meta={result?.energy_kev ? `${fmtFixed(result.energy_kev, 2)} keV` : undefined}
+          meta={
+            result?.energy_kev
+              ? `${fmtFixed(result.energy_kev, 2)} keV${result.wavelength_source === 'default' ? ' (既定)' : ''}`
+              : undefined
+          }
         />
       </MetricStrip>
 
