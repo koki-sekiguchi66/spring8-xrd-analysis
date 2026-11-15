@@ -160,6 +160,14 @@ export interface GroupBatchConfig {
   use_bcc211_constraint?: boolean;
   bcc110_center_tol_deg?: number;
   default_fit_limits?: Record<string, FitLimitConfig>;
+  min_peak_separation?: number;
+  suppress_before_onset?: boolean;
+  initial_ep_region?: number;
+  end_ep_region?: number;
+  num_init_val_set?: number;
+  vib_ratio_fine?: number;
+  final_num?: number;
+  v3_center_cap?: number;
 }
 
 export interface BatchGroupResult {
@@ -226,13 +234,21 @@ export interface PhysicsAnalysisResponse {
   status: string;
   source: string;
   wavelength_nm: number;
+  wavelength_source?: 'user' | 'default';
+  zero_alpha_before_num?: number;
   energy_kev: number;
   gamma_peaks: string[];
   alpha_prime_peaks: string[];
+  available_reflections?: string[];
+  excluded_reflections?: string[];
+  R_values?: Record<string, number>;
+  a_gamma_median_nm?: number;
+  a_alpha_prime_median_nm?: number;
   nums: number[];
-  f_gamma: number[];
-  f_alpha_prime: number[];
+  f_gamma: (number | null)[];
+  f_alpha_prime: (number | null)[];
   kinetics_fit?: {
+    model?: string;
     fs: number;
     beta: number;
     onset_num: number;

@@ -22,6 +22,7 @@ from backend.core.excel_io import (
 )
 from backend.core.fitters import Luders3Fitter, MultiPeakFitter, Ratio2Fitter, SinglePeakFitter
 from backend.core.origin_voigt import fit_origin_voigt_group, run_initial_auto_detect
+from backend.core.physics_analyzer import compute_physical_analysis
 from backend.core.separator import separate_directory
 from backend.core.utils import extract_file_num
 from backend.core.video_exporter import (
@@ -188,7 +189,7 @@ def test_all_four_fitters_and_output_excel(tmp_path: Path):
         bcg_dir=sub_bcg,
         peaks=["fcc111", "bcc110"],
         init_params={
-            "num": 900,
+            "num": 50,
             "v1_center": 11.3898,
             "v1_amplitude": 21546.0,
             "v1_wG": 0.0373,
@@ -201,11 +202,15 @@ def test_all_four_fitters_and_output_excel(tmp_path: Path):
         dimt_onset_num=200,
         num_init_val_set=3,
     )
+    # ver10: the 2-peak ratio engine covers only num <= DIMT onset, starting from a pre-onset initial file
     res2 = f2.run_all()
     df2 = res2["dataframe"]
     assert list(df2.columns) == build_unified_columns(["fcc111", "bcc110"])
-    assert len(res2["history_R"]) >= 3
+    assert df2["num"].max() <= 200
+    assert len(res2["history_R"]) >= 1
     assert res2["best_R"] > 0
+    ratio = df2["I_bcc110"] / df2["I_fcc111"]
+    assert np.allclose(ratio, res2["best_R"], rtol=1e-4)
 
     # 3. Luders3Fitter (Bug #2-1, #2-2, #2-3 fixes + v2_delta breakwater)
     f3 = Luders3Fitter(
@@ -259,9 +264,9 @@ def test_all_four_fitters_and_output_excel(tmp_path: Path):
     res4 = f4.run_all()
     df4 = res4["dataframe"]
     assert list(df4.columns) == build_unified_columns(["fcc220", "bcc211"])
-    # Before DIMT onset (num=25, 50, 100), newly forming peak bcc211 amplitude is suppressed to ~0
+    # ver4.0.0: before the DIMT onset the newly forming peak restarts from 0 every frame (bounded to <= 10)
     pre_dimt_rows = df4[df4["num"] < 200]
-    assert np.all(pre_dimt_rows["I_bcc211"] < 1e-3)
+    assert np.all(pre_dimt_rows["I_bcc211"] <= 10.0 + 1e-6)
 
     # 5. Export all to `output.xlsx` and verify sheets + embedded chart images
     out_xlsx = tmp_path / "Seki_age_2_testoutput.xlsx"
@@ -389,15 +394,14 @@ def test_comparison_with_reference_initial_and_output_old():
         "groups": [
             {
                 "group_id": "fcc111_bcc110",
-                "engine": "2PeaksRatio",
+                "engine": "MultiPeaks",
                 "peaks": ["fcc111", "bcc110"],
                 "init_num": 900,
                 "init_peaks": fit_pair_900,
                 "th_min": groups_by_id["fcc111_bcc110"]["range_min"],
                 "th_max": groups_by_id["fcc111_bcc110"]["range_max"],
                 "dimt_onset_num": 200,
-                "use_bcc211_constraint": True,
-                "bcc110_center_tol_deg": 0.05,
+                "newly_forms_peak": [1],
             },
             {
                 "group_id": "fcc200",
@@ -436,19 +440,22 @@ def test_comparison_with_reference_initial_and_output_old():
         assert abs(our_fcc200_df.loc[check_num, "2th_fcc200"] - ref_fcc200_df.loc[check_num, "2th_fcc200"]) < 0.003
         assert abs(our_fcc200_df.loc[check_num, "FWHM_fcc200"] - ref_fcc200_df.loc[check_num, "FWHM_fcc200"]) < 0.012
 
-    # Check bcc211: before DIMT onset (num < 200), I_bcc211 must be strictly 0.0 (Item 5)
+    # Check bcc211: Harada's single-peak method has no onset handling; the phase fraction treats
+    # newly forming alpha' before the DIMT onset as I = 0
     ref_bcc112_df = pd.read_excel(ref_out_xlsx, sheet_name="bcc112").set_index("num")
     our_bcc211_df = pd.DataFrame(out_groups["bcc211"]["rows"]).set_index("num")
-    assert np.all(our_bcc211_df.loc[our_bcc211_df.index < 200, "I_bcc211"] == 0.0)
-    # At num=900 (with 10-pt linear BG subtraction + independent wL fit), I_bcc211 and FWHM_bcc211 closely match reference bcc112
+    phys = compute_physical_analysis(out_groups, wavelength_nm=0.04133)
+    f_by_num = dict(zip(phys["nums"], phys["f_alpha_prime"]))
+    assert all(f_by_num[n] in (0.0, None) for n in f_by_num if n < 200)
+    # At num=900 (no local background term, as in Harada's scripts), I_bcc211 and FWHM_bcc211 match reference bcc112
     assert abs(our_bcc211_df.loc[900, "2th_bcc211"] - ref_bcc112_df.loc[900, "2th_bcc112"]) < 0.01
     assert abs(our_bcc211_df.loc[900, "I_bcc211"] - ref_bcc112_df.loc[900, "I_bcc112"]) / ref_bcc112_df.loc[900, "I_bcc112"] < 0.08
     assert abs(our_bcc211_df.loc[900, "FWHM_bcc211"] - ref_bcc112_df.loc[900, "FWHM_bcc112"]) < 0.03
 
-    # Check fcc111_bcc110: before DIMT onset (num < 200), I_bcc110 must be strictly 0.0 (Item 5)
+    # Check fcc111_bcc110 (MultiPeaks, newly forming bcc110): bounded to <= 10 before the onset
     ref_pair_df = pd.read_excel(ref_out_xlsx, sheet_name="fcc111bcc101").set_index("num")
     our_pair_df = pd.DataFrame(out_groups["fcc111_bcc110"]["rows"]).set_index("num")
-    assert np.all(our_pair_df.loc[our_pair_df.index < 200, "I_bcc110"] == 0.0)
+    assert np.all(our_pair_df.loc[our_pair_df.index < 200, "I_bcc110"] <= 10.0 + 1e-6)
     # In transformation regime (e.g. num=600, 800, 900, 1000), 2th and FWHM closely match reference
     for check_num in [600, 800, 900, 1000]:
         assert abs(our_pair_df.loc[check_num, "2th_fcc111"] - ref_pair_df.loc[check_num, "2th_fcc111"]) < 0.01

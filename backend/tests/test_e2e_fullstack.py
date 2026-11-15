@@ -130,8 +130,10 @@ def test_full_xrd_and_dic_api_and_websocket_pipeline(tmp_path: Path) -> None:
                     },
                     {
                         "group_id": "fcc111_bcc110",
-                        "engine": "2PeaksRatio",
+                        "engine": "MultiPeaks",
                         "peaks": ["fcc111", "bcc110"],
+                        "dimt_onset_num": 200,
+                        "newly_forms_peak": [1],
                         "init_num": 900,
                         "init_peaks": pair_fit["peaks"],
                         "th_min": 11.0,
@@ -214,9 +216,9 @@ def test_full_xrd_and_dic_api_and_websocket_pipeline(tmp_path: Path) -> None:
         "/api/fitting/physics-analysis",
         json={
             "excel_path": None,
-            "wavelength_nm": None,
-            "a_gamma0_nm": 0.3595,
-            "a_alpha0_nm": 0.2868,
+            "wavelength_nm": 0.04133,
+            "a_gamma0_nm": 0.3588,
+            "a_alpha0_nm": 0.2905,
             "instrumental_fwhm_deg": 0.018,
         },
     )
@@ -225,7 +227,8 @@ def test_full_xrd_and_dic_api_and_websocket_pipeline(tmp_path: Path) -> None:
     assert phys_data["status"] == "ok"
     assert len(phys_data["nums"]) == 210
     assert len(phys_data["f_alpha_prime"]) == 210
-    assert max(phys_data["f_alpha_prime"]) > 0.05
+    assert max(v for v in phys_data["f_alpha_prime"] if v is not None) > 0.05
+    assert phys_data["wavelength_source"] == "user"
     assert max(v for v in phys_data["rho_gamma_m2"] if v is not None) > 1e12
 
     # Also test loading physics analysis directly from saved output.xlsx

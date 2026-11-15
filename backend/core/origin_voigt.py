@@ -127,6 +127,7 @@ PHASE_REFLECTIONS: List[Dict[str, Any]] = [
     {"name": "fcc311", "phase": "gamma", "phase_label": "γ-FCC", "hkl": "(311)", "Q": 11, "default_2th": 22.00},
     {"name": "fcc222", "phase": "gamma", "phase_label": "γ-FCC", "hkl": "(222)", "Q": 12, "default_2th": 22.95},
     {"name": "bcc220", "phase": "alpha_prime", "phase_label": "α'-BCC", "hkl": "(220)", "Q": 8, "default_2th": 23.16},
+    {"name": "bcc321", "phase": "alpha_prime", "phase_label": "α'-BCC", "hkl": "(321)", "Q": 14, "default_2th": 30.87},
 ]
 
 CANDIDATE_GROUP_SPECS: List[Dict[str, Any]] = [
@@ -139,10 +140,13 @@ CANDIDATE_GROUP_SPECS: List[Dict[str, Any]] = [
         "range_min": 10.90,
         "range_max": 12.10,
         "recommended_stage": "late",
-        "default_engine": "2PeaksRatio",
-        "supported_engines": ["2PeaksRatio", "3PeaksLuders", "MultiPeaks"],
+        # Annealed/aged specimens: alpha' 110 forms only by DIMT -> MultiPeaks with a newly forming peak
+        # (Harada's multi-peak script). 2PeaksRatio (pre-onset) + 3PeaksLuders (post-onset) are Harada's
+        # method for cold-rolled specimens with pre-existing martensite.
+        "default_engine": "MultiPeaks",
+        "supported_engines": ["MultiPeaks", "2PeaksRatio", "3PeaksLuders"],
         "default_selected": True,
-        "description": "γ(111) 主ピークと α'(110) マルテンサイト主ピークの重畳ペア",
+        "description": "γ(111) 主ピークと α'(110) マルテンサイト主ピークの重畳ペア（γ111 は集合組織の影響を強く受ける）",
     },
     {
         "group_id": "fcc200",
@@ -228,6 +232,20 @@ CANDIDATE_GROUP_SPECS: List[Dict[str, Any]] = [
         "default_selected": False,
         "description": "高角側の γ(222) と α'(220) の重畳ペア",
     },
+    {
+        "group_id": "bcc321",
+        "label": "bcc321 (α'単一ピーク)",
+        "category": "single",
+        "peaks": ["bcc321"],
+        "phases": ["alpha_prime"],
+        "range_min": 30.10,
+        "range_max": 31.70,
+        "recommended_stage": "late",
+        "default_engine": "1Peak",
+        "supported_engines": ["1Peak"],
+        "default_selected": True,
+        "description": "高角側の孤立 α'(321)。α'(211) と独立に相分率を検証できる",
+    },
 ]
 
 
@@ -303,6 +321,71 @@ class CandidateFitResult:
             "residual": [round(v, 4) for v in self.residual],
             "components": {k: [round(v, 4) for v in arr] for k, arr in self.components.items()},
         }
+
+
+def _window_integral(path: Path, lo: float, hi: float) -> float:
+    import pandas as pd  # local import keeps module import light
+
+    arr = pd.read_csv(path, header=None, usecols=[0, 1]).to_numpy(dtype=float)
+    m = (arr[:, 0] >= lo) & (arr[:, 0] <= hi)
+    if np.count_nonzero(m) < 12:
+        return 0.0
+    # Detection metric only: a straight line through the window edges removes slowly varying
+    # contributions (tails of neighbouring gamma peaks that broaden with strain).
+    y_sub, _, _, _ = subtract_local_linear_bg(arr[m, 0], arr[m, 1], n_edge=5)
+    return float(trapezoid(y_sub, arr[m, 0]))
+
+
+def estimate_dimt_onset(
+    files: List[Tuple[int, Path]],
+    early_num: Optional[int] = None,
+    window: Tuple[float, float] = (19.45, 20.65),
+    smooth: int = 21,
+    n_sigma: float = 5.0,
+    sustain: int = 10,
+) -> int:
+    """Estimate the DIMT onset from the alpha' 211 window integral of every file.
+
+    The integral is smoothed with a `smooth`-frame moving average; the onset is the first file whose
+    smoothed value exceeds mean + `n_sigma` x std of the early (gamma single-phase) frames and stays
+    above it for `sustain` consecutive files. This is only the default shown in the UI; Harada's
+    scripts take `DIMT_onset_num` from the user, which remains editable in Step 3.
+    """
+    n_files = len(files)
+    fallback = files[min(n_files - 1, max(1, int(n_files * 0.18)))][0]
+    # Shorter smoothing for sparse series so the window does not span a large num range
+    smooth = int(min(smooth, max(5, (n_files // 25) | 1)))
+    sustain = int(min(sustain, max(3, n_files // 50)))
+    if n_files < max(30, smooth + sustain):
+        return fallback
+    nums = np.array([num for num, _ in files], dtype=int)
+    vals = np.empty(n_files, dtype=float)
+    for i, (_num, p) in enumerate(files):
+        try:
+            vals[i] = _window_integral(p, *window)
+        except Exception:
+            vals[i] = np.nan
+    if np.all(np.isnan(vals)):
+        return fallback
+    vals = np.where(np.isnan(vals), np.nanmedian(vals), vals)
+    kernel = np.ones(smooth) / smooth
+    ma = np.convolve(vals, kernel, mode="same")
+    half = smooth // 2
+    base_lo = half
+    # Baseline = frames up to the gamma single-phase reference file (or the first 10 % of the files)
+    base_hi = int(n_files * 0.10)
+    if early_num is not None:
+        base_hi = max(base_hi, int(np.searchsorted(nums, early_num)) + 1)
+    base_hi = max(base_lo + 10, base_hi)
+    base = ma[base_lo:min(base_hi, n_files - half)]
+    if base.size < 5:
+        return fallback
+    thr = float(np.mean(base) + n_sigma * np.std(base))
+    above = ma > thr
+    for i in range(base_lo, n_files - half - sustain):
+        if np.all(above[i:i + sustain]):
+            return int(nums[i])
+    return fallback
 
 
 def select_representative_files(bcg_dir: str | Path) -> Dict[str, Any]:
@@ -381,29 +464,7 @@ def select_representative_files(bcg_dir: str | Path) -> Dict[str, Any]:
         except Exception:
             continue
 
-    # Estimate DIMT onset by sampling ~25 files across the dataset for bcc211 emergence
-    sample_step = max(1, n_files // 25)
-    sampled = files[::sample_step]
-    bcc211_areas: List[Tuple[int, float]] = []
-    for num, p in sampled:
-        try:
-            arr = np.loadtxt(p, delimiter=",")
-            x, y = arr[:, 0], arr[:, 1]
-            m = (x >= 19.65) & (x <= 20.40)
-            area = float(trapezoid(np.maximum(0.0, y[m]), x[m])) if np.any(m) else 0.0
-            bcc211_areas.append((num, area))
-        except Exception:
-            continue
-
-    dimt_onset_num = files[min(len(files) - 1, max(1, int(n_files * 0.18)))][0]
-    if len(bcc211_areas) >= 4:
-        base_area = float(np.median([a for _, a in bcc211_areas[:3]]))
-        max_area = max(a for _, a in bcc211_areas)
-        threshold_area = base_area + 0.08 * max(10.0, max_area - base_area)
-        for num, area in bcc211_areas:
-            if area > threshold_area and num > best_early_num:
-                dimt_onset_num = num
-                break
+    dimt_onset_num = estimate_dimt_onset(files, early_num=best_early_num)
 
     selected = sorted(list({best_early_num, best_late_num}))
     return {
@@ -545,8 +606,8 @@ def fit_origin_voigt_group(
         else:
             c0 = float(range_min + (idx + 1) * (range_max - range_min) / (n_peaks + 1))
 
-        # Special handling for overlapping fcc111 + bcc110 pair
-        if n_peaks == 2 and peak_names[0].startswith("fcc111") and is_bcc:
+        # Special handling for overlapping fcc111 + bcc110 pair (applies to both peaks of the pair)
+        if n_peaks == 2 and peak_names[0].startswith("fcc111") and is_martensite_peak(peak_names[1]):
             idx_max = int(np.argmax(y))
             c_fcc = float(x[idx_max])
             if idx == 0:

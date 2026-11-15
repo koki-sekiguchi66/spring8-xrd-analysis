@@ -12,7 +12,7 @@ import { apiPost, fmtFixed, fmtSci } from '../lib/utils';
 import { PlotlyChart } from './PlotlyChart';
 import { Button } from './ui/Button';
 import { Disclosure } from './ui/Disclosure';
-import { FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
+import { CheckboxRow, FieldLabel, TextInput, UnitNumberInput } from './ui/Field';
 import { MetricCell, MetricStrip } from './ui/MetricStrip';
 import { Notice } from './ui/Notice';
 import { Panel } from './ui/Panel';
@@ -38,8 +38,12 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
   const [activeSubView, setActiveSubView] = useState<PhysicsSubView>('phase_fraction');
   const [excelPath, setExcelPath] = useState<string>('');
   const [instrumentalFwhm, setInstrumentalFwhm] = useState<number>(0.018);
-  const [aGamma0, setAGamma0] = useState<number>(0.3595);
-  const [aAlpha0, setAAlpha0] = useState<number>(0.2868);
+  const [wavelengthNm, setWavelengthNm] = useState<number>(0.04133);
+  const [aGamma0, setAGamma0] = useState<number>(0.3588);
+  const [aAlpha0, setAAlpha0] = useState<number>(0.2905);
+  // '' = use the DIMT onset stored with the fitted groups; 0 = disabled
+  const [zeroAlphaBefore, setZeroAlphaBefore] = useState<string>('');
+  const [excludedRefl, setExcludedRefl] = useState<string[]>([]);
   const [showAdvancedParams, setShowAdvancedParams] = useState<boolean>(false);
 
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -63,7 +67,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
     }
   };
 
-  const handleRunAnalysis = async (overrideExcel?: string) => {
+  const handleRunAnalysis = async (overrideExcel?: string, overrideExcluded?: string[]) => {
     const targetExcel = (overrideExcel !== undefined ? overrideExcel : excelPath).trim();
     if (!targetExcel && !hasSessionGroups && !folderPath) {
       setErrorMsg('解析対象のデータがありません。Step 3 を実行するか、output.xlsx を指定してください。');
@@ -77,9 +81,12 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         specimen_name: specimenName || undefined,
         excel_path: targetExcel || undefined,
         groups: !targetExcel && hasSessionGroups ? batchResults : undefined,
+        wavelength_nm: wavelengthNm,
         instrumental_fwhm_deg: instrumentalFwhm,
         a_gamma0_nm: aGamma0,
         a_alpha0_nm: aAlpha0,
+        exclude_peaks: overrideExcluded ?? excludedRefl,
+        zero_alpha_before_num: zeroAlphaBefore.trim() === '' ? undefined : Number(zeroAlphaBefore),
       });
       setResult(res);
     } catch (e: any) {
@@ -157,7 +164,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
         y: result.kinetics_fit.fitted_curve.map((v) => v * 100),
         type: 'scatter',
         mode: 'lines',
-        name: `Olson-Cohen Fit (n=${fmtFixed(result.kinetics_fit.n, 2)})`,
+        name: `経験式 f(num) フィット (n=${fmtFixed(result.kinetics_fit.n, 2)})`,
         line: { color: '#34d399', width: 1.8, dash: 'dash' },
       });
     }
@@ -300,13 +307,31 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
       {/* Calibration Parameters Disclosure */}
       <Disclosure
         title="物理定数・装置分解能設定"
-        summary={`FWHM_inst=${instrumentalFwhm}° · a_γ0=${aGamma0}nm · a_α'0=${aAlpha0}nm`}
+        summary={`λ=${wavelengthNm}nm · FWHM_inst=${instrumentalFwhm}° · 除外=${excludedRefl.length ? excludedRefl.join(',') : 'なし'}`}
         open={showAdvancedParams}
         onToggle={() => setShowAdvancedParams((v) => !v)}
       >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <FieldLabel hint="装置由来半値幅">装置分解能 FWHM_inst</FieldLabel>
+            <FieldLabel hint="ビームタイムの較正値（CeO2 等）">X線波長 λ</FieldLabel>
+            <UnitNumberInput
+              unit="nm"
+              step="0.00001"
+              value={wavelengthNm}
+              onChange={(e) => setWavelengthNm(parseFloat(e.target.value) || 0)}
+            />
+          </div>
+          <div>
+            <FieldLabel hint="空欄 = Step 3 の変態開始 num、0 = 無効">新生 α' を 0 とする num 未満</FieldLabel>
+            <UnitNumberInput
+              step="1"
+              value={zeroAlphaBefore}
+              placeholder={result ? String(result.zero_alpha_before_num ?? '') : ''}
+              onChange={(e) => setZeroAlphaBefore(e.target.value)}
+            />
+          </div>
+          <div>
+            <FieldLabel hint="装置由来半値幅（ガウス成分）">装置分解能 FWHM_inst</FieldLabel>
             <UnitNumberInput
               unit="deg"
               step="0.001"
@@ -315,7 +340,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
           <div>
-            <FieldLabel hint="無ひずみオーステナイト基準格子定数">a_γ0</FieldLabel>
+            <FieldLabel hint="ピーク位置から測れない場合の予備値">a_γ0</FieldLabel>
             <UnitNumberInput
               unit="nm"
               step="0.0001"
@@ -324,7 +349,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
           <div>
-            <FieldLabel hint="無ひずみマルテンサイト基準格子定数">a_α'0</FieldLabel>
+            <FieldLabel hint="ピーク位置から測れない場合の予備値">a_α'0</FieldLabel>
             <UnitNumberInput
               unit="nm"
               step="0.0001"
@@ -333,6 +358,32 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             />
           </div>
         </div>
+        {result?.available_reflections?.length ? (
+          <div className="mt-3 space-y-1.5">
+            <FieldLabel hint="集合組織の影響が大きい反射（例: fcc111, bcc110）を除外できます">
+              相分率に使う反射
+            </FieldLabel>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+              {result.available_reflections.map((key) => (
+                <CheckboxRow
+                  key={key}
+                  checked={!excludedRefl.includes(key)}
+                  onChange={(val) => {
+                    const next = val ? excludedRefl.filter((k) => k !== key) : [...excludedRefl, key];
+                    setExcludedRefl(next);
+                    handleRunAnalysis(undefined, next);
+                  }}
+                  label={
+                    <span className="text-xs font-mono tabular-nums">
+                      {key}
+                      {result.R_values?.[key] !== undefined ? ` (R=${fmtFixed(result.R_values[key], 1)})` : ''}
+                    </span>
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </Disclosure>
 
       {errorMsg && <Notice tone="error">{errorMsg}</Notice>}
@@ -367,7 +418,11 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
           value={result?.wavelength_nm ? fmtFixed(result.wavelength_nm, 5) : '—'}
           unit="nm"
           tone="emerald"
-          meta={result?.energy_kev ? `${fmtFixed(result.energy_kev, 2)} keV` : undefined}
+          meta={
+            result?.energy_kev
+              ? `${fmtFixed(result.energy_kev, 2)} keV${result.wavelength_source === 'default' ? '（既定値）' : ''}`
+              : undefined
+          }
         />
       </MetricStrip>
 
@@ -377,7 +432,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
             <Calculator className="w-4 h-4 text-[#38bdf8]" />
           </div>
           <p className="text-[12px] text-[#b4b9c4]">
-            「物性値を計算」を実行すると、直接比較法による相分率・Williamson-Hall転位密度・格子ひずみが算出されます。
+            「物性値を計算」を実行すると、直接比較法による相分率・修正Williamson-Hall転位密度（半定量）・格子ひずみが算出されます。
           </p>
         </Panel>
       ) : (
@@ -389,7 +444,7 @@ export const Step5PhysicsAnalysis: React.FC<Step5PhysicsAnalysisProps> = ({
               toolbar={
                 result.kinetics_fit ? (
                   <StatusBadge tone="emerald" mono>
-                    Olson-Cohen n={fmtFixed(result.kinetics_fit.n, 2)} · β={fmtSci(result.kinetics_fit.beta, 2)}
+                    経験式 f(num) n={fmtFixed(result.kinetics_fit.n, 2)} · β={fmtSci(result.kinetics_fit.beta, 2)}
                   </StatusBadge>
                 ) : null
               }

@@ -22,28 +22,28 @@ export const ModelSpecModal: React.FC<ModelSpecModalProps> = ({ open, onClose })
 
   const specs = [
     {
-      title: 'Voigt 独立幅最適化 (Origin70互換)',
+      title: 'Voigt 独立幅最適化 (Origin 互換)',
       accent: 'text-sky-300',
       detail:
-        'ガウス幅 wG とローレンツ幅 wL に独立の vary=True を設定し、Olivero-Longbothum 式で合成半値幅 FWHM を算出します。',
+        'ガウス幅 wG とローレンツ幅 wL を独立に最適化し（lmfit の gamma=sigma 拘束を解除）、Olivero-Longbothum 式で合成半値幅 FWHM を算出します。',
     },
     {
-      title: 'bcc211 による Bragg 幾何拘束',
+      title: '原田スクリプト準拠の連続解析',
       accent: 'text-amber-300',
       detail:
-        '孤立ピーク bcc211 から θ_110 = arcsin(sin(θ_211) / √3) および tan(θ_110) / tan(θ_211) 比で重畳 bcc110 を拘束します。',
+        '1Peak=ver7.0、MultiPeaks=ver4.0.0、2PeaksRatio=ver10（冷間圧延材・変態前）、3PeaksLuders=ver4（冷間圧延材・変態後）。前フレーム基準の拘束、積分強度スケーリング、初期値からの逆向き→前向き解析を元スクリプトどおりに行います。',
     },
     {
-      title: '局所直線 BG 減算と再現性',
+      title: '背景処理と再現性',
       accent: 'text-emerald-300',
       detail:
-        '切り出し範囲両端10点平均を結ぶ局所直線BGを差し引き、random.seed(42) で決定論的なフィッティングを実行します。',
+        '背景は前処理（Rubberband + PCHIP）でのみ除去し、フィット窓では Voigt 成分だけを当てはめます（元スクリプトどおり。窓端直線の差し引きは行いません）。乱数は各フレームで seed=42 に固定します。',
     },
     {
       title: '相分率・転位密度算出',
       accent: 'text-[#eceef2]',
       detail:
-        '多重度・構造因子・LP因子補正済みの積分強度比から f_α\' を算出し、Modified Williamson-Hall 法で転位密度 ρ を求めます。',
+        "直接比較法: R = p|F|²·LP·exp(-2Bs²)/V²（Cromer-Mann 散乱因子、実測格子定数）で I/R を相ごとに平均して f_α' を算出。同一反射の成分（bcc110a+bcc1102 等）は合算、変態開始前の新生 α' は 0 とみなします。転位密度は修正 Williamson-Hall 法による半定量値です。",
     },
   ];
 

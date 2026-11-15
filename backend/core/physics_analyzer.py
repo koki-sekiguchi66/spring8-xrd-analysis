@@ -1,17 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Physical Metallurgy Analysis Engine from XRD Voigt Fitting Output (`physics_analyzer.py`).
+"""Physical quantities from the fitted peak parameters `[num, 2th_*, I_*, wG_*, wL_*, FWHM_*]`.
 
-Computes from fitted peak parameters `[num, 2th_{peak}, I_{peak}, wG_{peak}, wL_{peak}, FWHM_{peak}]`:
-1. Martensite Volume Fraction (f_alpha') & Austenite Volume Fraction (f_gamma) via Direct Comparison Method
-   with theoretical crystallographic intensity factors R_hkl and Olson-Cohen / Burke-Matsumura kinetics fit.
-2. Dislocation Density Evolution (rho_gamma, rho_alpha') [m^-2] for each phase via Modified Williamson-Hall
-   and Williamson-Smallman microstrain equations with cubic dislocation contrast factors C_hkl.
-3. Lattice Parameter (a_gamma, a_alpha') [nm] and Elastic Lattice Strain (epsilon_hkl) [microstrain].
+1. Martensite volume fraction by the direct comparison method (as in Harada's Excel workflow):
+
+       f_alpha' = (1/m sum_alpha I/R) / (1/m sum_alpha I/R + 1/n sum_gamma I/R)
+
+   R_hkl = p |F|^2 LP exp(-2B s^2) / V^2 with Cromer-Mann atomic scattering factors (Fe/Ni alloy),
+   V from the lattice parameters measured in the same data set, and LP = (1 + cos^2 2th)/(sin^2 th cos th).
+   Components of the same reflection in one fitting group (e.g. `bcc110a` + `bcc1102`, pre-existing and
+   newly formed alpha') are summed before entering the average. A reflection fitted to I = 0 counts as a
+   measured zero; a missing (NaN) reflection is left out of that frame. Frames without both phases get
+   `None` (no estimate from the gamma intensity drop).
+   `include_peaks` / `exclude_peaks` select the reflections (texture-dominated reflections such as
+   gamma 111 can be excluded). Per-reflection `I/R` values are exported so the average can be recomputed.
+2. Lattice parameters and lattice strain (relative to the first valid frames of each peak).
+3. Dislocation density by the modified Williamson-Hall method (Ungar):
+   dK = 0.9/D + (pi M^2 b^2 / 2)^(1/2) rho^(1/2) K C^(1/2)  ->  rho = 2 slope^2 / (pi M^2 b^2).
+   Instrumental broadening is removed from the Gaussian part only (wG_phys^2 = wG^2 - wG_inst^2).
+   Contrast factors use average C_h00 / q values; treat the result as semi-quantitative.
+
+The X-ray wavelength must be supplied (default 0.04133 nm of this beam time). It is never derived
+from an assumed lattice parameter, which would force a_gamma to that assumption.
 """
 
 from __future__ import annotations
 
 import math
+import re
+from itertools import permutations, product
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,177 +35,136 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
 
+DEFAULT_WAVELENGTH_NM = 0.04133
+DEFAULT_A_GAMMA_NM = 0.3588
+DEFAULT_A_ALPHA_NM = 0.2905
+DEFAULT_B_ISO_A2 = 0.35  # isotropic Debye-Waller B (A^2), Fe at room temperature
+DEFAULT_X_NI = 0.23  # Ni atomic fraction of Fe-24Ni-0.5C-0.8V (both phases)
 
-# Crystallographic metadata for γ-FCC (Austenite) and α'-BCC (Martensite) reflections
-CRYSTAL_REFLECTIONS: Dict[str, Dict[str, Any]] = {
-    "fcc111": {
-        "phase": "gamma",
-        "hkl": (1, 1, 1),
-        "h2k2l2": 3,
-        "multiplicity": 8,
-        "H2": 1.0 / 3.0,  # (1+1+1)/9 = 1/3
-        "default_2th": 11.41,
-    },
-    "fcc200": {
-        "phase": "gamma",
-        "hkl": (2, 0, 0),
-        "h2k2l2": 4,
-        "multiplicity": 6,
-        "H2": 0.0,
-        "default_2th": 13.19,
-    },
-    "fcc220": {
-        "phase": "gamma",
-        "hkl": (2, 2, 0),
-        "h2k2l2": 8,
-        "multiplicity": 12,
-        "H2": 0.25,
-        "default_2th": 18.69,
-    },
-    "fcc311": {
-        "phase": "gamma",
-        "hkl": (3, 1, 1),
-        "h2k2l2": 11,
-        "multiplicity": 24,
-        "H2": 19.0 / 121.0,
-        "default_2th": 21.95,
-    },
-    "fcc222": {
-        "phase": "gamma",
-        "hkl": (2, 2, 2),
-        "h2k2l2": 12,
-        "multiplicity": 8,
-        "H2": 1.0 / 3.0,
-        "default_2th": 22.95,
-    },
-    "bcc110": {
-        "phase": "alpha_prime",
-        "hkl": (1, 1, 0),
-        "h2k2l2": 2,
-        "multiplicity": 12,
-        "H2": 0.25,
-        "default_2th": 11.53,
-    },
-    "bcc200": {
-        "phase": "alpha_prime",
-        "hkl": (2, 0, 0),
-        "h2k2l2": 4,
-        "multiplicity": 6,
-        "H2": 0.0,
-        "default_2th": 16.33,
-    },
-    "bcc211": {
-        "phase": "alpha_prime",
-        "hkl": (2, 1, 1),
-        "h2k2l2": 6,
-        "multiplicity": 24,
-        "H2": 0.25,
-        "default_2th": 20.03,
-    },
-    "bcc220": {
-        "phase": "alpha_prime",
-        "hkl": (2, 2, 0),
-        "h2k2l2": 8,
-        "multiplicity": 12,
-        "H2": 0.25,
-        "default_2th": 23.16,
-    },
+# Cromer-Mann coefficients (International Tables for Crystallography, Vol. C, Table 6.1.1.4)
+_CROMER_MANN = {
+    "Fe": ((11.7695, 7.3573, 3.5222, 2.3045), (4.7611, 0.3072, 15.3535, 76.8805), 1.0369),
+    "Ni": ((12.8376, 7.2920, 4.4438, 2.3800), (3.8785, 0.2565, 12.1763, 66.3421), 1.0341),
 }
+
+# Average dislocation contrast factors (edge/screw mixture)
+_CONTRAST = {"gamma": (0.30, 2.2), "alpha_prime": (0.285, 1.8)}
+
+_PEAK_RE = re.compile(r"^(fcc|bcc|bct)(\d)(\d)(\d)(.*)$", re.IGNORECASE)
+
+# Kept for backward compatibility of imports; derived from parse_peak_name
+CRYSTAL_REFLECTIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def parse_peak_name(peak_name: str) -> Optional[Dict[str, Any]]:
+    """Parse names such as `fcc111`, `fcc111a`, `bcc112`, `bcc101`, `bcc1102`, `bcc321`.
+
+    Returns the canonical reflection key (indices sorted, e.g. bcc112 -> bcc211, bcc101 -> bcc110),
+    phase, hkl, multiplicity and H^2, or `None` if the name is not a valid cubic reflection.
+    """
+    m = _PEAK_RE.match(str(peak_name).strip())
+    if not m:
+        return None
+    lattice = m.group(1).lower()
+    hkl = tuple(sorted((int(m.group(2)), int(m.group(3)), int(m.group(4))), reverse=True))
+    h, k, l = hkl
+    if hkl == (0, 0, 0):
+        return None
+    if lattice == "fcc":
+        if not (h % 2 == k % 2 == l % 2):
+            return None
+        phase = "gamma"
+    else:  # bcc / bct (pseudo-cubic average of the tetragonal doublet)
+        if (h + k + l) % 2 != 0:
+            return None
+        phase = "alpha_prime"
+        lattice = "bcc"
+    sq = h * h + k * k + l * l
+    return {
+        "key": f"{lattice}{h}{k}{l}",
+        "phase": phase,
+        "hkl": hkl,
+        "h2k2l2": sq,
+        "multiplicity": multiplicity(hkl),
+        "H2": (h * h * k * k + k * k * l * l + l * l * h * h) / float(sq * sq),
+        "component": m.group(5),
+    }
 
 
 def canonical_peak_key(peak_name: str) -> Optional[str]:
-    """Normalize peak name (e.g. 'bcc110_2' or 'fcc111') to a canonical key in CRYSTAL_REFLECTIONS."""
-    clean = peak_name.strip().lower()
-    for key in CRYSTAL_REFLECTIONS:
-        if clean.startswith(key):
-            return key
-    return None
+    info = parse_peak_name(peak_name)
+    return info["key"] if info else None
+
+
+def multiplicity(hkl: Tuple[int, int, int]) -> int:
+    """Number of distinct {hkl} planes in the cubic system (sign and permutation equivalents)."""
+    seen = set()
+    for perm in permutations(hkl):
+        for signs in product((1, -1), repeat=3):
+            seen.add(tuple(s * v for s, v in zip(signs, perm)))
+    return len(seen)
+
+
+def atomic_scattering_factor(s_inv_A: float, x_ni: float = DEFAULT_X_NI) -> float:
+    """Composition-weighted Cromer-Mann f(s) of the Fe-Ni matrix, s = sin(theta)/lambda in A^-1."""
+    def _f(el: str) -> float:
+        a, b, c = _CROMER_MANN[el]
+        return sum(ai * math.exp(-bi * s_inv_A ** 2) for ai, bi in zip(a, b)) + c
+    return (1.0 - x_ni) * _f("Fe") + x_ni * _f("Ni")
 
 
 def lorentz_polarization_factor(two_theta_deg: float) -> float:
-    """Compute synchrotron transmission XRD Lorentz-Polarization factor LP(theta)."""
-    theta_rad = math.radians(max(1.0, min(89.0, two_theta_deg)) / 2.0)
-    two_theta_rad = math.radians(max(2.0, min(178.0, two_theta_deg)))
-    denom = (math.sin(theta_rad) ** 2) * math.cos(theta_rad)
-    if denom <= 1e-12:
-        return 1.0
-    return (1.0 + math.cos(two_theta_rad) ** 2) / denom
+    th = math.radians(two_theta_deg / 2.0)
+    return (1.0 + math.cos(2.0 * th) ** 2) / (math.sin(th) ** 2 * math.cos(th))
 
 
-def atomic_scattering_approx(sin_theta_over_lambda_nm_inv: float) -> float:
-    """Approximate atomic scattering factor f(s) for Fe-Ni-C alloy (s = sin(theta)/lambda in nm^-1)."""
-    # s in A^-1 is 0.1 * sin_theta_over_lambda_nm_inv
-    s_ang = 0.1 * sin_theta_over_lambda_nm_inv
-    # Analytic Cromer-Mann style Gaussian decay for Fe (Z=26)
-    return 26.0 * math.exp(-3.5 * (s_ang ** 2))
+def bragg_two_theta(hkl: Tuple[int, int, int], a_nm: float, wavelength_nm: float) -> float:
+    d = a_nm / math.sqrt(sum(v * v for v in hkl))
+    return 2.0 * math.degrees(math.asin(min(0.999999, wavelength_nm / (2.0 * d))))
 
 
 def theoretical_R_factor(
-    peak_key: str,
-    two_theta_deg: float,
+    peak_name: str,
     wavelength_nm: float,
-    a_gamma_nm: float = 0.3595,
-    a_alpha_nm: float = 0.2868,
+    a_nm: float,
+    b_iso_A2: float = DEFAULT_B_ISO_A2,
+    x_ni: float = DEFAULT_X_NI,
 ) -> float:
-    """Calculate theoretical relative intensity factor R_hkl for Direct Comparison Method."""
-    meta = CRYSTAL_REFLECTIONS.get(peak_key)
-    if not meta:
-        return 1.0
-
-    phase = meta["phase"]
-    mult = float(meta["multiplicity"])
-    lp = lorentz_polarization_factor(two_theta_deg)
-    theta_rad = math.radians(two_theta_deg / 2.0)
-    s_nm_inv = math.sin(theta_rad) / max(1e-5, wavelength_nm)
-    f_atom = atomic_scattering_approx(s_nm_inv)
-
-    # Debye-Waller factor exp(-2M) with B_iso ~ 0.0045 nm^2
-    dw = math.exp(-2.0 * 0.0045 * (s_nm_inv ** 2))
-
-    if phase == "gamma":
-        # FCC has 4 atoms per unit cell: |F|^2 = 16 * f^2, V_c = a_gamma^3
-        v_cell = a_gamma_nm ** 3
-        struct_sq = 16.0 * (f_atom ** 2)
-    else:
-        # BCC has 2 atoms per unit cell: |F|^2 = 4 * f^2, V_c = a_alpha^3
-        v_cell = a_alpha_nm ** 3
-        struct_sq = 4.0 * (f_atom ** 2)
-
-    return (mult * struct_sq * lp * dw) / max(1e-12, v_cell ** 2)
-
-
-def calibrate_wavelength_nm(
-    merged_df: pd.DataFrame,
-    a_gamma0_nm: float = 0.3595,
-) -> float:
-    """Estimate synchrotron X-ray wavelength (nm) from initial γ-FCC peak positions."""
-    # Check fcc200 or fcc111 in the earliest rows
-    for pk, h2k2l2 in [("fcc200", 4), ("fcc111", 3), ("fcc220", 8)]:
-        col = f"2th_{pk}"
-        if col in merged_df.columns:
-            valid = merged_df[col].dropna()
-            valid = valid[valid > 5.0]
-            if not valid.empty:
-                two_th0 = float(valid.iloc[:5].median())
-                d_hkl = a_gamma0_nm / math.sqrt(h2k2l2)
-                lam = 2.0 * d_hkl * math.sin(math.radians(two_th0 / 2.0))
-                if 0.015 <= lam <= 0.25:
-                    return lam
-    # Default SPring-8 30 keV high-energy XRD wavelength (~0.04127 nm)
-    return 0.04127
+    """R_hkl = p |F|^2 LP exp(-2B s^2) / V^2 (V in nm^3) at the Bragg angle of the given lattice parameter."""
+    info = parse_peak_name(peak_name)
+    if info is None:
+        raise ValueError(f"Unknown reflection: {peak_name}")
+    hkl = info["hkl"]
+    two_th = bragg_two_theta(hkl, a_nm, wavelength_nm)
+    d_A = 10.0 * a_nm / math.sqrt(info["h2k2l2"])
+    s = 1.0 / (2.0 * d_A)
+    f = atomic_scattering_factor(s, x_ni)
+    n_atoms = 4 if info["phase"] == "gamma" else 2
+    f_sq = (n_atoms * f) ** 2
+    dw = math.exp(-2.0 * b_iso_A2 * s * s)
+    return info["multiplicity"] * f_sq * lorentz_polarization_factor(two_th) * dw / (a_nm ** 3) ** 2
 
 
 def _olson_cohen_kinetics(x: np.ndarray, fs: float, beta: float, x0: float, n: float) -> np.ndarray:
+    """Empirical JMAK/Avrami-type curve in frame number (not the strain-based Olson-Cohen equation)."""
     dx = np.maximum(0.0, x - x0)
     return fs * (1.0 - np.exp(-beta * (dx ** n)))
 
 
-def merge_groups_into_dataframe(groups: Dict[str, Any]) -> Tuple[pd.DataFrame, List[str]]:
-    """Merge all fitted peak groups on `num` into a single DataFrame."""
-    dfs: List[pd.DataFrame] = []
-    detected_peaks: List[str] = []
+PREEXISTING_ALPHA_ENGINES = {"2PeaksRatio", "3PeaksLuders"}
 
-    for gid, grec in groups.items():
+
+def infer_alpha_onset(groups: Dict[str, Any]) -> int:
+    """DIMT onset stored with the fitted groups (smallest one), or 0 if unknown."""
+    onsets = [int(rec["dimt_onset_num"]) for rec in groups.values() if rec.get("dimt_onset_num")]
+    return min(onsets) if onsets else 0
+
+
+def merge_groups_into_dataframe(groups: Dict[str, Any]) -> Tuple[pd.DataFrame, List[str]]:
+    """Merge all fitted groups on `num` (the first group wins for identical column names)."""
+    dfs: List[pd.DataFrame] = []
+    detected: List[str] = []
+    for grec in groups.values():
         rows = grec.get("rows", [])
         if not rows:
             continue
@@ -197,23 +172,17 @@ def merge_groups_into_dataframe(groups: Dict[str, Any]) -> Tuple[pd.DataFrame, L
         if "num" not in df_g.columns:
             continue
         df_g["num"] = df_g["num"].astype(int)
-        df_g = df_g.sort_values("num").drop_duplicates(subset=["num"], keep="last")
-        dfs.append(df_g)
+        dfs.append(df_g.sort_values("num").drop_duplicates(subset=["num"], keep="last"))
         for pk in grec.get("peaks", []):
-            if pk not in detected_peaks:
-                detected_peaks.append(pk)
-
+            if pk not in detected:
+                detected.append(pk)
     if not dfs:
         return pd.DataFrame(), []
-
     merged = dfs[0]
     for df_next in dfs[1:]:
-        overlap_cols = [c for c in df_next.columns if c in merged.columns and c != "num"]
-        df_clean = df_next.drop(columns=overlap_cols) if overlap_cols else df_next
-        merged = pd.merge(merged, df_clean, on="num", how="outer")
-
-    merged = merged.sort_values("num").reset_index(drop=True)
-    return merged, detected_peaks
+        overlap = [c for c in df_next.columns if c in merged.columns and c != "num"]
+        merged = pd.merge(merged, df_next.drop(columns=overlap), on="num", how="outer")
+    return merged.sort_values("num").reset_index(drop=True), detected
 
 
 def load_groups_from_output_excel(excel_path: str | Path) -> Dict[str, Any]:
@@ -221,7 +190,6 @@ def load_groups_from_output_excel(excel_path: str | Path) -> Dict[str, Any]:
     path = Path(excel_path).resolve()
     if not path.exists():
         raise FileNotFoundError(f"Output Excel file not found: {path}")
-
     xl = pd.ExcelFile(path, engine="openpyxl")
     groups: Dict[str, Any] = {}
     for sheet in xl.sheet_names:
@@ -232,316 +200,311 @@ def load_groups_from_output_excel(excel_path: str | Path) -> Dict[str, Any]:
             continue
         df = df.dropna(subset=["num"]).copy()
         df["num"] = df["num"].astype(int)
-        peaks_in_sheet: List[str] = []
-        for col in df.columns:
-            if str(col).startswith("2th_"):
-                pk = str(col).replace("2th_", "", 1)
-                peaks_in_sheet.append(pk)
+        peaks_in_sheet = [str(c).replace("2th_", "", 1) for c in df.columns if str(c).startswith("2th_")]
         if not peaks_in_sheet:
             continue
-        groups[sheet] = {
-            "group_id": sheet,
-            "sheet_name": sheet,
-            "peaks": peaks_in_sheet,
-            "rows": df.to_dict(orient="records"),
-        }
+        groups[sheet] = {"group_id": sheet, "sheet_name": sheet, "peaks": peaks_in_sheet, "rows": df.to_dict(orient="records")}
     return groups
+
+
+def _num(v: Any) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+    return f
+
+
+def _select(key: str, raw: str, include: Optional[set], exclude: set) -> bool:
+    if key in exclude or raw in exclude:
+        return False
+    if include is None:
+        return True
+    return key in include or raw in include
 
 
 def compute_physical_analysis(
     groups: Dict[str, Any],
     wavelength_nm: Optional[float] = None,
     instrumental_fwhm_deg: float = 0.018,
-    a_gamma0_nm: float = 0.3595,
-    a_alpha0_nm: float = 0.2868,
+    a_gamma0_nm: float = DEFAULT_A_GAMMA_NM,
+    a_alpha0_nm: float = DEFAULT_A_ALPHA_NM,
+    include_peaks: Optional[List[str]] = None,
+    exclude_peaks: Optional[List[str]] = None,
+    b_iso_A2: float = DEFAULT_B_ISO_A2,
+    x_ni: float = DEFAULT_X_NI,
+    wilkens_M: float = 1.0,
+    kinetics_max_num: Optional[int] = None,
+    zero_alpha_before_num: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Compute Martensite phase fraction, Dislocation density per phase, Lattice constants, and Strains."""
-    merged, raw_peaks = merge_groups_into_dataframe(groups)
-    if merged.empty:
+    """Martensite fraction, lattice parameters/strains and dislocation densities per frame.
+
+    `zero_alpha_before_num`: alpha' reflections of newly forming martensite are counted as I = 0 for
+    `num < zero_alpha_before_num` (DIMT onset). Harada's single-peak and multi-peak scripts still fit
+    noise there (amplitude bounded but not zero), which otherwise produces a spurious f_alpha'.
+    Groups fitted with 2PeaksRatio / 3PeaksLuders (pre-existing martensite of cold-rolled specimens)
+    are never zeroed. `None` = take the onset stored with the groups; `0` = disabled.
+    """
+    lam = float(wavelength_nm) if (wavelength_nm and wavelength_nm > 0) else DEFAULT_WAVELENGTH_NM
+    wavelength_source = "user" if (wavelength_nm and wavelength_nm > 0) else "default"
+    include = {canonical_peak_key(p) or p for p in include_peaks} | set(include_peaks) if include_peaks else None
+    exclude = ({canonical_peak_key(p) or p for p in exclude_peaks} | set(exclude_peaks)) if exclude_peaks else set()
+
+    if zero_alpha_before_num is None:
+        zero_alpha_before_num = infer_alpha_onset(groups)
+    zero_before = int(zero_alpha_before_num or 0)
+
+    # ---- collect per-group, per-reflection data -------------------------------------------------
+    raw_peaks: List[Tuple[str, Dict[str, Any], str]] = []  # (raw name, info, group id)
+    group_frames: List[Tuple[str, pd.DataFrame, List[str]]] = []
+    preexisting_groups = {str(g) for g, rec in groups.items() if str(rec.get("engine", "")) in PREEXISTING_ALPHA_ENGINES}
+    for gid, grec in groups.items():
+        rows = grec.get("rows", [])
+        if not rows:
+            continue
+        df = pd.DataFrame(rows)
+        if "num" not in df.columns:
+            continue
+        df["num"] = df["num"].astype(int)
+        df = df.sort_values("num").drop_duplicates(subset=["num"], keep="last").set_index("num")
+        peaks = [p for p in grec.get("peaks", []) if f"I_{p}" in df.columns]
+        group_frames.append((str(gid), df, peaks))
+        for p in peaks:
+            info = parse_peak_name(p)
+            if info and all(p != rp for rp, _, _ in raw_peaks):
+                raw_peaks.append((p, info, str(gid)))
+    if not group_frames:
         raise ValueError("解析対象となるフィッティング結果データがありません。")
 
-    lam_nm = wavelength_nm if (wavelength_nm and wavelength_nm > 0) else calibrate_wavelength_nm(merged, a_gamma0_nm)
-    energy_kev = 1.23984193 / lam_nm
-
-    nums = merged["num"].astype(int).tolist()
+    nums = sorted({int(n) for _, df, _ in group_frames for n in df.index})
     n_rows = len(nums)
 
-    # Identify canonical peaks present in columns
-    gamma_peaks: List[Tuple[str, str]] = []  # (raw_peak_name, canonical_key)
-    alpha_peaks: List[Tuple[str, str]] = []
+    def series(df: pd.DataFrame, col: str) -> pd.Series:
+        return pd.to_numeric(df[col], errors="coerce").reindex(nums) if col in df.columns else pd.Series(np.nan, index=nums)
 
-    for col in merged.columns:
-        if col.startswith("2th_"):
-            raw_pk = col.replace("2th_", "", 1)
-            ckey = canonical_peak_key(raw_pk)
-            if ckey:
-                phase = CRYSTAL_REFLECTIONS[ckey]["phase"]
-                if phase == "gamma":
-                    gamma_peaks.append((raw_pk, ckey))
-                else:
-                    alpha_peaks.append((raw_pk, ckey))
-
-    # 1. Reference initial 2theta_0 for each peak (average of first 5 valid frames where intensity > 0)
-    ref_2th0: Dict[str, float] = {}
-    ref_fwhm0: Dict[str, float] = {}
-    for raw_pk, ckey in gamma_peaks + alpha_peaks:
-        col_2th = f"2th_{raw_pk}"
-        col_I = f"I_{raw_pk}"
-        col_fwhm = f"FWHM_{raw_pk}"
-        if col_2th in merged.columns:
-            s_2th = pd.to_numeric(merged[col_2th], errors="coerce")
-            s_I = pd.to_numeric(merged.get(col_I, pd.Series(np.ones(n_rows))), errors="coerce").fillna(0.0)
-            max_I = float(s_I.max()) if len(s_I) > 0 else 0.0
-            valid_mask = (s_2th > 5.0) & (s_I > max(1.0, 0.03 * max_I))
-            valid_2th = s_2th[valid_mask]
-            if not valid_2th.empty:
-                ref_2th0[raw_pk] = float(valid_2th.iloc[:5].median())
-            else:
-                ref_2th0[raw_pk] = CRYSTAL_REFLECTIONS[ckey]["default_2th"]
-        if col_fwhm in merged.columns:
-            s_fw = pd.to_numeric(merged[col_fwhm], errors="coerce")
-            valid_fw = s_fw[(s_fw > 0.005) & (s_fw < 0.5)]
-            if not valid_fw.empty:
-                # Instrumental width baseline is minimum of configured or 85% of earliest clean width
-                ref_fwhm0[raw_pk] = min(instrumental_fwhm_deg, float(valid_fw.iloc[:5].min()) * 0.85)
-            else:
-                ref_fwhm0[raw_pk] = instrumental_fwhm_deg
-
-    # Burgers vectors (nm) & dislocation contrast constants
-    b_gamma_nm = a_gamma0_nm / math.sqrt(2.0)  # ~0.2542 nm
-    b_alpha_nm = (math.sqrt(3.0) / 2.0) * a_alpha0_nm  # ~0.2484 nm
-    C_h00_gamma, q_gamma = 0.30, 2.2
-    C_h00_alpha, q_alpha = 0.285, 1.8
-
-    f_alpha_list: List[float] = []
-    f_gamma_list: List[float] = []
-    rho_gamma_list: List[Optional[float]] = []
-    rho_alpha_list: List[Optional[float]] = []
-    a_gamma_list: List[Optional[float]] = []
-    a_alpha_list: List[Optional[float]] = []
-    microstrain_gamma_list: List[Optional[float]] = []
-    microstrain_alpha_list: List[Optional[float]] = []
-
-    lattice_strains_by_peak: Dict[str, List[Optional[float]]] = {
-        raw_pk: [] for raw_pk, _ in (gamma_peaks + alpha_peaks)
-    }
-    dislocation_by_peak: Dict[str, List[Optional[float]]] = {
-        raw_pk: [] for raw_pk, _ in (gamma_peaks + alpha_peaks)
-    }
-
-    # Representative Williamson-Hall snapshot data (for early, mid, late frames)
-    wh_snapshots: Dict[str, Any] = {}
-    snapshot_targets = [
-        nums[0],
-        nums[len(nums) // 2],
-        nums[-1],
-    ]
-
-    for row_idx, row in merged.iterrows():
-        num_val = int(row["num"])
-
-        # --- A. Martensite & Austenite Phase Fraction (Direct Comparison Method) ---
-        v_gamma_terms: List[float] = []
-        v_alpha_terms: List[float] = []
-
-        for raw_pk, ckey in gamma_peaks:
-            val_I = float(row.get(f"I_{raw_pk}", 0.0) or 0.0)
-            val_2th = float(row.get(f"2th_{raw_pk}", 0.0) or ref_2th0.get(raw_pk, 12.0))
-            if val_I > 0 and val_2th > 5.0:
-                R_val = theoretical_R_factor(ckey, val_2th, lam_nm, a_gamma0_nm, a_alpha0_nm)
-                v_gamma_terms.append(val_I / R_val)
-
-        for raw_pk, ckey in alpha_peaks:
-            val_I = float(row.get(f"I_{raw_pk}", 0.0) or 0.0)
-            val_2th = float(row.get(f"2th_{raw_pk}", 0.0) or ref_2th0.get(raw_pk, 12.0))
-            if val_I > 0 and val_2th > 5.0:
-                R_val = theoretical_R_factor(ckey, val_2th, lam_nm, a_gamma0_nm, a_alpha0_nm)
-                v_alpha_terms.append(val_I / R_val)
-
-        mean_v_gamma = float(np.mean(v_gamma_terms)) if v_gamma_terms else 0.0
-        mean_v_alpha = float(np.mean(v_alpha_terms)) if v_alpha_terms else 0.0
-
-        if mean_v_gamma + mean_v_alpha > 1e-12:
-            if alpha_peaks:
-                f_a = mean_v_alpha / (mean_v_gamma + mean_v_alpha)
-            else:
-                # If only γ-FCC peak(s) were fitted, estimate transformed fraction from normalized γ intensity drop
-                f_a = 0.0
-            f_a = float(np.clip(f_a, 0.0, 1.0))
-            f_g = 1.0 - f_a
-        else:
-            f_a = 0.0
-            f_g = 1.0
-
-        f_alpha_list.append(round(f_a, 5))
-        f_gamma_list.append(round(f_g, 5))
-
-        # --- B. Lattice Constants, Elastic Lattice Strains & Dislocation Density ---
-        a_g_vals: List[float] = []
-        a_a_vals: List[float] = []
-        rho_g_peaks: List[float] = []
-        rho_a_peaks: List[float] = []
-        eps_g_peaks: List[float] = []
-        eps_a_peaks: List[float] = []
-
-        wh_pts_gamma: List[Dict[str, float]] = []
-        wh_pts_alpha: List[Dict[str, float]] = []
-
-        for raw_pk, ckey in gamma_peaks + alpha_peaks:
-            meta = CRYSTAL_REFLECTIONS[ckey]
-            phase = meta["phase"]
-            h2k2l2 = meta["h2k2l2"]
-            H2 = meta["H2"]
-
-            val_2th = float(row.get(f"2th_{raw_pk}", np.nan))
-            val_I = float(row.get(f"I_{raw_pk}", 0.0) or 0.0)
-            val_fwhm = float(row.get(f"FWHM_{raw_pk}", np.nan))
-            val_wG = float(row.get(f"wG_{raw_pk}", np.nan))
-            val_wL = float(row.get(f"wL_{raw_pk}", np.nan))
-
-            if np.isnan(val_2th) or val_2th <= 5.0 or val_I <= 1.0:
-                lattice_strains_by_peak[raw_pk].append(None)
-                dislocation_by_peak[raw_pk].append(None)
+    # Canonical reflection intensities: sum of components within a group; first group wins across groups
+    refl_I: Dict[str, pd.Series] = {}
+    refl_meta: Dict[str, Dict[str, Any]] = {}
+    refl_source: Dict[str, str] = {}
+    for gid, df, peaks in group_frames:
+        per_key: Dict[str, pd.Series] = {}
+        for p in peaks:
+            info = parse_peak_name(p)
+            if info is None or not _select(info["key"], p, include, exclude):
                 continue
-
-            theta_rad = math.radians(val_2th / 2.0)
-            d_nm = lam_nm / (2.0 * math.sin(theta_rad))
-            a_nm = d_nm * math.sqrt(h2k2l2)
-
-            if phase == "gamma":
-                a_g_vals.append(a_nm)
+            s_I = series(df, f"I_{p}").clip(lower=0.0)
+            if info["phase"] == "alpha_prime" and zero_before > 0 and gid not in preexisting_groups:
+                s_I = s_I.where(~((s_I.index < zero_before) & s_I.notna()), 0.0)
+            per_key[info["key"]] = s_I if info["key"] not in per_key else per_key[info["key"]].add(s_I, fill_value=0.0)
+            refl_meta[info["key"]] = info
+        for key, s in per_key.items():
+            if key not in refl_I:
+                refl_I[key] = s
+                refl_source[key] = gid
             else:
-                a_a_vals.append(a_nm)
+                refl_I[key] = refl_I[key].combine_first(s)
 
-            # Elastic lattice strain relative to initial undeformed 2theta_0 (in microstrain 10^-6)
-            two_th0 = ref_2th0.get(raw_pk, val_2th)
-            d0_nm = lam_nm / (2.0 * math.sin(math.radians(two_th0 / 2.0)))
-            lattice_strain_ue = ((d_nm - d0_nm) / d0_nm) * 1e6
-            lattice_strains_by_peak[raw_pk].append(round(lattice_strain_ue, 2))
+    # ---- lattice parameters (for V and Bragg angles) --------------------------------------------
+    def lattice_param(two_th: float, info: Dict[str, Any]) -> float:
+        d = lam / (2.0 * math.sin(math.radians(two_th / 2.0)))
+        return d * math.sqrt(info["h2k2l2"])
 
-            # Dislocation density from physical line broadening
-            if not np.isnan(val_fwhm) and val_fwhm > 0.002:
-                fwhm_inst = ref_fwhm0.get(raw_pk, instrumental_fwhm_deg)
-                # Deconvolve instrumental broadening (halagham / Voigt-like geometric subtraction)
-                beta_phys_deg = math.sqrt(max(1e-6, (val_fwhm ** 2) - (fwhm_inst ** 2)))
-                beta_rad = math.radians(beta_phys_deg)
+    a_by_phase: Dict[str, List[List[float]]] = {"gamma": [[] for _ in nums], "alpha_prime": [[] for _ in nums]}
+    peak_series: Dict[str, Dict[str, pd.Series]] = {}
+    for p, info, gid in raw_peaks:
+        df = next(d for g, d, _ in group_frames if g == gid)
+        s2 = series(df, f"2th_{p}")
+        sI = series(df, f"I_{p}")
+        peak_series[p] = {"2th": s2, "I": sI, "wG": series(df, f"wG_{p}"), "wL": series(df, f"wL_{p}"), "FWHM": series(df, f"FWHM_{p}")}
+        i_max = float(np.nanmax(sI.values)) if np.any(np.isfinite(sI.values)) else 0.0
+        for idx, n in enumerate(nums):
+            t, i_val = s2.loc[n], sI.loc[n]
+            if np.isfinite(t) and t > 5.0 and np.isfinite(i_val) and i_val > max(1.0, 0.03 * i_max):
+                a_by_phase[info["phase"]][idx].append(lattice_param(float(t), info))
 
-                K_nm_inv = (2.0 * math.sin(theta_rad)) / lam_nm
-                dK_nm_inv = (math.cos(theta_rad) * beta_rad) / lam_nm
+    def phase_median(phase: str, fallback: float) -> float:
+        vals = [v for frame in a_by_phase[phase] for v in frame]
+        return float(np.median(vals)) if vals else fallback
 
-                if phase == "gamma":
-                    C_bar = C_h00_gamma * (1.0 - q_gamma * H2)
-                    b_nm = b_gamma_nm
-                else:
-                    C_bar = C_h00_alpha * (1.0 - q_alpha * H2)
-                    b_nm = b_alpha_nm
+    a_gamma_med = phase_median("gamma", a_gamma0_nm)
+    a_alpha_med = phase_median("alpha_prime", a_alpha0_nm)
 
-                C_bar = max(0.05, C_bar)
-                # Effective microstrain e_rms corrected by contrast factor C_bar
-                # dK = K * sqrt(C_bar) * e_disl + dK_size
-                # Subtract baseline size broadening (~0.9 / 250 nm)
-                dK_net = max(1e-5, dK_nm_inv - (0.9 / 300.0))
-                e_disl = dK_net / max(1e-4, K_nm_inv * math.sqrt(C_bar))
+    R_values: Dict[str, float] = {}
+    for key, info in refl_meta.items():
+        a_nm = a_gamma_med if info["phase"] == "gamma" else a_alpha_med
+        R_values[key] = theoretical_R_factor(key, lam, a_nm, b_iso_A2, x_ni)
+    # Normalise for readability (gamma 200 = 1000 if present)
+    r_norm = R_values.get("fcc200") or (max(R_values.values()) if R_values else 1.0)
+    R_scaled = {k: 1000.0 * v / r_norm for k, v in R_values.items()}
 
-                # Williamson-Smallman / Ungár relation: rho = (2 * e_disl^2) / (b^2)
-                # Convert nm^-2 to m^-2 (1 nm^-2 = 10^18 m^-2)
-                rho_m2 = (2.0 * (e_disl ** 2) / (b_nm ** 2)) * 1e18
-                rho_m2 = float(np.clip(rho_m2, 1e12, 5e16))
-                dislocation_by_peak[raw_pk].append(round(rho_m2, 3))
+    gamma_keys = sorted(k for k, m in refl_meta.items() if m["phase"] == "gamma")
+    alpha_keys = sorted(k for k, m in refl_meta.items() if m["phase"] == "alpha_prime")
 
-                if phase == "gamma":
-                    rho_g_peaks.append(rho_m2)
-                    eps_g_peaks.append(e_disl * 100.0)
-                    wh_pts_gamma.append({
-                        "peak": raw_pk,
-                        "K_C": round(K_nm_inv * math.sqrt(C_bar), 4),
-                        "dK": round(dK_nm_inv, 5),
-                    })
-                else:
-                    rho_a_peaks.append(rho_m2)
-                    eps_a_peaks.append(e_disl * 100.0)
-                    wh_pts_alpha.append({
-                        "peak": raw_pk,
-                        "K_C": round(K_nm_inv * math.sqrt(C_bar), 4),
-                        "dK": round(dK_nm_inv, 5),
-                    })
+    f_alpha_list: List[Optional[float]] = []
+    f_gamma_list: List[Optional[float]] = []
+    ir_by_key: Dict[str, List[Optional[float]]] = {k: [] for k in gamma_keys + alpha_keys}
+    for n in nums:
+        terms: Dict[str, List[float]] = {"gamma": [], "alpha_prime": []}
+        for key in gamma_keys + alpha_keys:
+            val = refl_I[key].loc[n]
+            if np.isfinite(val):
+                ir = float(val) / R_scaled[key]
+                terms[refl_meta[key]["phase"]].append(ir)
+                ir_by_key[key].append(round(ir, 6))
             else:
-                dislocation_by_peak[raw_pk].append(None)
+                ir_by_key[key].append(None)
+        if terms["gamma"] and terms["alpha_prime"]:
+            vg, va = float(np.mean(terms["gamma"])), float(np.mean(terms["alpha_prime"]))
+            if vg + va > 0:
+                fa = va / (vg + va)
+                f_alpha_list.append(round(fa, 5))
+                f_gamma_list.append(round(1.0 - fa, 5))
+                continue
+        f_alpha_list.append(None)
+        f_gamma_list.append(None)
 
-        a_gamma_list.append(round(float(np.mean(a_g_vals)), 5) if a_g_vals else None)
-        a_alpha_list.append(round(float(np.mean(a_a_vals)), 5) if a_a_vals else None)
-        rho_gamma_list.append(round(float(np.mean(rho_g_peaks)), 3) if rho_g_peaks else None)
-        rho_alpha_list.append(round(float(np.mean(rho_a_peaks)), 3) if rho_a_peaks else None)
-        microstrain_gamma_list.append(round(float(np.mean(eps_g_peaks)), 4) if eps_g_peaks else None)
-        microstrain_alpha_list.append(round(float(np.mean(eps_a_peaks)), 4) if eps_a_peaks else None)
+    # ---- lattice strain & dislocation density per peak -----------------------------------------
+    M2 = float(wilkens_M) ** 2
+    b_vec = {"gamma": a_gamma_med / math.sqrt(2.0), "alpha_prime": math.sqrt(3.0) / 2.0 * a_alpha_med}
+    wG_inst = float(instrumental_fwhm_deg)
 
-        if num_val in snapshot_targets:
-            wh_snapshots[str(num_val)] = {
-                "num": num_val,
-                "gamma": wh_pts_gamma,
-                "alpha_prime": wh_pts_alpha,
-            }
+    lattice_strains_by_peak: Dict[str, List[Optional[float]]] = {}
+    dislocation_by_peak: Dict[str, List[Optional[float]]] = {}
+    wh_points: List[Dict[str, List[Tuple[str, float, float]]]] = [{"gamma": [], "alpha_prime": []} for _ in nums]
 
-    # Fallback: If only γ-FCC peaks were analyzed (no α' peaks selected), estimate f_alpha from γ intensity reduction
-    if not alpha_peaks and gamma_peaks:
-        raw_pk0 = gamma_peaks[0][0]
-        s_I0 = pd.to_numeric(merged[f"I_{raw_pk0}"], errors="coerce").fillna(0.0).values
-        init_I = float(np.median(s_I0[:5])) if len(s_I0) >= 5 else float(np.max(s_I0))
-        if init_I > 0:
-            f_alpha_list = [round(float(np.clip(1.0 - (val / init_I), 0.0, 1.0)), 5) for val in s_I0]
-            f_gamma_list = [round(1.0 - fa, 5) for fa in f_alpha_list]
+    for p, info, _gid in raw_peaks:
+        ps = peak_series[p]
+        sI = ps["I"]
+        i_max = float(np.nanmax(sI.values)) if np.any(np.isfinite(sI.values)) else 0.0
+        valid = [(n, float(ps["2th"].loc[n])) for n in nums
+                 if np.isfinite(ps["2th"].loc[n]) and ps["2th"].loc[n] > 5.0 and np.isfinite(sI.loc[n]) and sI.loc[n] > max(1.0, 0.03 * i_max)]
+        ref_2th = float(np.median([t for _, t in valid[:5]])) if valid else bragg_two_theta(info["hkl"], a_gamma_med if info["phase"] == "gamma" else a_alpha_med, lam)
+        d0 = lam / (2.0 * math.sin(math.radians(ref_2th / 2.0)))
+        C_h00, q = _CONTRAST[info["phase"]]
+        C_bar = max(1e-3, C_h00 * (1.0 - q * info["H2"]))
+        strains: List[Optional[float]] = []
+        rhos: List[Optional[float]] = []
+        valid_nums = {n for n, _ in valid}
+        for idx, n in enumerate(nums):
+            if n not in valid_nums:
+                strains.append(None)
+                rhos.append(None)
+                continue
+            t = float(ps["2th"].loc[n])
+            th = math.radians(t / 2.0)
+            d = lam / (2.0 * math.sin(th))
+            strains.append(round((d - d0) / d0 * 1e6, 2))
+            wG, wL = float(ps["wG"].loc[n]), float(ps["wL"].loc[n])
+            if not (np.isfinite(wG) and np.isfinite(wL)):
+                rhos.append(None)
+                continue
+            wG_phys = math.sqrt(max(0.0, wG * wG - wG_inst * wG_inst))
+            fwhm_phys = 0.5346 * wL + math.sqrt(0.2166 * wL * wL + wG_phys * wG_phys)
+            K = 2.0 * math.sin(th) / lam
+            dK = math.cos(th) * math.radians(fwhm_phys) / lam
+            x_wh = K * math.sqrt(C_bar)
+            wh_points[idx][info["phase"]].append((p, x_wh, dK))
+            # Per-peak upper bound (size broadening neglected)
+            rho = 2.0 * (dK / x_wh) ** 2 / (math.pi * M2 * b_vec[info["phase"]] ** 2) * 1e18
+            rhos.append(round(rho, 3))
+        lattice_strains_by_peak[p] = strains
+        dislocation_by_peak[p] = rhos
 
-    # Fit Olson-Cohen / Burke-Matsumura Kinetics Model to f_alpha_list
+    rho_phase: Dict[str, List[Optional[float]]] = {"gamma": [], "alpha_prime": []}
+    eps_phase: Dict[str, List[Optional[float]]] = {"gamma": [], "alpha_prime": []}
+    for idx in range(n_rows):
+        for phase in ("gamma", "alpha_prime"):
+            pts = wh_points[idx][phase]
+            xs = np.array([x for _, x, _ in pts])
+            ys = np.array([y for _, _, y in pts])
+            rho_val = None
+            eps_val = None
+            if len(pts) >= 2 and np.ptp(xs) > 1e-9:
+                slope, _intercept = np.polyfit(xs, ys, 1)
+                if slope > 0:
+                    rho_val = round(2.0 * slope ** 2 / (math.pi * M2 * b_vec[phase] ** 2) * 1e18, 3)
+                    # mWH slope / 2 corresponds to the apparent microstrain of the classical W-H plot (%)
+                    eps_val = round(float(slope) / 2.0 * 100.0, 5)
+            rho_phase[phase].append(rho_val)
+            eps_phase[phase].append(eps_val)
+
+    a_gamma_list = [round(float(np.mean(v)), 6) if v else None for v in a_by_phase["gamma"]]
+    a_alpha_list = [round(float(np.mean(v)), 6) if v else None for v in a_by_phase["alpha_prime"]]
+
+    wh_snapshots: Dict[str, Any] = {}
+    valid_idx = [i for i in range(n_rows) if wh_points[i]["gamma"] or wh_points[i]["alpha_prime"]]
+    for i in ([valid_idx[0], valid_idx[len(valid_idx) // 2], valid_idx[-1]] if valid_idx else []):
+        wh_snapshots[str(nums[i])] = {
+            "num": nums[i],
+            "gamma": [{"peak": p, "K_C": round(x, 4), "dK": round(y, 6)} for p, x, y in wh_points[i]["gamma"]],
+            "alpha_prime": [{"peak": p, "K_C": round(x, 4), "dK": round(y, 6)} for p, x, y in wh_points[i]["alpha_prime"]],
+        }
+
+    # ---- empirical kinetics curve f(num) ---------------------------------------------------------
     kinetics_fit: Optional[Dict[str, Any]] = None
     try:
-        x_arr = np.array(nums, dtype=float)
-        y_arr = np.array(f_alpha_list, dtype=float)
-        if np.max(y_arr) > 0.03 and len(x_arr) >= 6:
-            onset_guess = float(x_arr[np.argmax(y_arr > 0.02)]) if np.any(y_arr > 0.02) else float(x_arr[0])
-            p0 = [min(1.0, float(np.max(y_arr)) * 1.05), 0.002, onset_guess, 1.5]
-            bounds = ([0.05, 1e-6, float(x_arr[0]), 0.5], [1.0, 5.0, float(x_arr[-1]), 5.0])
-            popt, _ = curve_fit(_olson_cohen_kinetics, x_arr, y_arr, p0=p0, bounds=bounds, maxfev=5000)
-            y_pred = _olson_cohen_kinetics(x_arr, *popt)
-            kinetics_fit = {
-                "fs": round(float(popt[0]), 4),
-                "beta": float(popt[1]),
-                "onset_num": round(float(popt[2]), 1),
-                "n": round(float(popt[3]), 3),
-                "fitted_curve": [round(float(v), 5) for v in y_pred],
-            }
+        pts = [(n, f) for n, f in zip(nums, f_alpha_list) if f is not None and (kinetics_max_num is None or n <= kinetics_max_num)]
+        if len(pts) >= 6:
+            x_arr = np.array([p[0] for p in pts], dtype=float)
+            y_arr = np.array([p[1] for p in pts], dtype=float)
+            if np.max(y_arr) > 0.03:
+                onset_guess = float(x_arr[np.argmax(y_arr > 0.02)]) if np.any(y_arr > 0.02) else float(x_arr[0])
+                p0 = [min(1.0, float(np.max(y_arr)) * 1.05), 0.002, onset_guess, 1.5]
+                bounds = ([0.01, 1e-8, float(x_arr[0]), 0.3], [1.0, 10.0, float(x_arr[-1]), 6.0])
+                popt, _ = curve_fit(_olson_cohen_kinetics, x_arr, y_arr, p0=p0, bounds=bounds, maxfev=10000)
+                curve = _olson_cohen_kinetics(np.array(nums, dtype=float), *popt)
+                kinetics_fit = {
+                    "model": "f = fs [1 - exp(-beta (num - num0)^n)] (empirical, frame-number based)",
+                    "fs": round(float(popt[0]), 4),
+                    "beta": float(popt[1]),
+                    "onset_num": round(float(popt[2]), 1),
+                    "n": round(float(popt[3]), 3),
+                    "fitted_curve": [round(float(v), 5) for v in curve],
+                }
     except Exception:
         kinetics_fit = None
 
-    # Build summary table rows for export & UI
     summary_rows: List[Dict[str, Any]] = []
-    for i, num_val in enumerate(nums):
-        r_dict: Dict[str, Any] = {
-            "num": num_val,
+    for i, n in enumerate(nums):
+        r: Dict[str, Any] = {
+            "num": n,
             "f_gamma": f_gamma_list[i],
             "f_alpha_prime": f_alpha_list[i],
-            "rho_gamma_m2": rho_gamma_list[i],
-            "rho_alpha_prime_m2": rho_alpha_list[i],
+            "rho_gamma_m2": rho_phase["gamma"][i],
+            "rho_alpha_prime_m2": rho_phase["alpha_prime"][i],
             "a_gamma_nm": a_gamma_list[i],
             "a_alpha_prime_nm": a_alpha_list[i],
         }
-        for raw_pk in lattice_strains_by_peak:
-            r_dict[f"strain_{raw_pk}_ue"] = lattice_strains_by_peak[raw_pk][i]
-            r_dict[f"rho_{raw_pk}_m2"] = dislocation_by_peak[raw_pk][i]
-        summary_rows.append(r_dict)
+        for key in gamma_keys + alpha_keys:
+            r[f"IR_{key}"] = ir_by_key[key][i]
+        for p in lattice_strains_by_peak:
+            r[f"strain_{p}_ue"] = lattice_strains_by_peak[p][i]
+            r[f"rho_{p}_m2"] = dislocation_by_peak[p][i]
+        summary_rows.append(r)
 
     return {
-        "wavelength_nm": round(lam_nm, 6),
-        "energy_kev": round(energy_kev, 2),
-        "gamma_peaks": [p[0] for p in gamma_peaks],
-        "alpha_prime_peaks": [p[0] for p in alpha_peaks],
+        "wavelength_nm": round(lam, 6),
+        "wavelength_source": wavelength_source,
+        "zero_alpha_before_num": zero_before,
+        "energy_kev": round(1.23984193 / lam, 3),
+        "gamma_peaks": gamma_keys,
+        "alpha_prime_peaks": alpha_keys,
+        "available_reflections": sorted({info["key"] for _p, info, _g in raw_peaks}),
+        "excluded_reflections": sorted(
+            {info["key"] for _p, info, _g in raw_peaks} - set(gamma_keys) - set(alpha_keys)
+        ),
+        "reflection_sources": refl_source,
+        "R_values": {k: round(v, 3) for k, v in R_scaled.items()},
+        "a_gamma_median_nm": round(a_gamma_med, 6),
+        "a_alpha_prime_median_nm": round(a_alpha_med, 6),
         "nums": nums,
         "f_gamma": f_gamma_list,
         "f_alpha_prime": f_alpha_list,
         "kinetics_fit": kinetics_fit,
-        "rho_gamma_m2": rho_gamma_list,
-        "rho_alpha_prime_m2": rho_alpha_list,
-        "microstrain_gamma_pct": microstrain_gamma_list,
-        "microstrain_alpha_prime_pct": microstrain_alpha_list,
+        "rho_gamma_m2": rho_phase["gamma"],
+        "rho_alpha_prime_m2": rho_phase["alpha_prime"],
+        "microstrain_gamma_pct": eps_phase["gamma"],
+        "microstrain_alpha_prime_pct": eps_phase["alpha_prime"],
         "a_gamma_nm": a_gamma_list,
         "a_alpha_prime_nm": a_alpha_list,
         "lattice_strains_ue": lattice_strains_by_peak,

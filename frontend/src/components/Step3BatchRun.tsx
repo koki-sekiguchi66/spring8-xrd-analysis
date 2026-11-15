@@ -17,6 +17,7 @@ import { CheckboxRow, FieldLabel, SelectInput, UnitNumberInput } from './ui/Fiel
 import { StatusBadge } from './ui/StatusBadge';
 import { Notice } from './ui/Notice';
 import { fmtFixed, runFittingStream } from '../lib/utils';
+import { ENGINE_RUN_DEFAULTS, defaultLimitsFor } from '../lib/engineDefaults';
 import type { BatchGroupResult, FitLimitConfig, GroupBatchConfig } from '../types/xrd';
 
 export interface Step3BatchRunProps {
@@ -43,22 +44,6 @@ interface LiveWaveformState {
   components: Record<string, number[]>;
 }
 
-const DEFAULT_LIMIT_TEMPLATE: FitLimitConfig = {
-  center_min_offset: -0.05,
-  center_max_offset: 0.2,
-  amplitude_min_factor: 0.8,
-  amplitude_max_factor: 1.25,
-  amplitude_min_offset: 0,
-  amplitude_max_offset: 10,
-  sigma_min_factor: 0.7,
-  sigma_max_factor: 1.4,
-  sigma_min_offset: 0,
-  sigma_max_offset: 0.0001,
-  gamma_min_factor: 0.7,
-  gamma_max_factor: 1.4,
-  gamma_min_offset: 0,
-  gamma_max_offset: 0.0001,
-};
 
 export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
   folderPath,
@@ -113,7 +98,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
         if (cfg.group_id !== groupId) return cfg;
         const vKey = `v${peakIdx + 1}`;
         const existingLimits = cfg.default_fit_limits || {};
-        const curPeakLimit = existingLimits[vKey] || { ...DEFAULT_LIMIT_TEMPLATE };
+        const curPeakLimit = existingLimits[vKey] || defaultLimitsFor(cfg.engine, peakIdx);
         return {
           ...cfg,
           default_fit_limits: {
@@ -470,18 +455,22 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                         aria-label={`${cfg.group_id} 解析エンジン`}
                         mono
                         value={cfg.engine}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const engine = e.target.value as GroupBatchConfig['engine'];
+                          // Switch to the residual criterion and per-frame limits of that engine's original script
                           updateGroupConfig(cfg.group_id, {
-                            engine: e.target.value as GroupBatchConfig['engine'],
-                          })
-                        }
+                            engine,
+                            ...ENGINE_RUN_DEFAULTS[engine],
+                            default_fit_limits: undefined,
+                          });
+                        }}
                         className="w-40 h-7 text-xs"
                       >
                         {isMulti ? (
                           <>
+                            <option value="MultiPeaks">MultiPeaks</option>
                             <option value="2PeaksRatio">2PeaksRatio</option>
                             <option value="3PeaksLuders">3PeaksLuders</option>
-                            <option value="MultiPeaks">MultiPeaks</option>
                           </>
                         ) : (
                           <option value="1Peak">1Peak</option>
@@ -568,9 +557,9 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                             }
                           />
                         </div>
-                        {isMulti && (
+                        {cfg.engine === '3PeaksLuders' && (
                           <div>
-                            <FieldLabel>初期強度比 R</FieldLabel>
+                            <FieldLabel>強度比 R (2PeaksRatio の best_R)</FieldLabel>
                             <UnitNumberInput
                               step="0.02"
                               value={cfg.R}
@@ -582,11 +571,24 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                         )}
                       </div>
 
+                      {cfg.engine === '2PeaksRatio' && (
+                        <Notice tone="info">
+                          冷間圧延材用（原田 ver10）: 変態開始 num 以下のフレームだけを先頭から前向きに解析し、既存 α' の強度比 R
+                          を粗→細探索します。初期値は変態開始前のファイルから選び、変態開始後は 3PeaksLuders で解析してください。
+                        </Notice>
+                      )}
+                      {cfg.engine === '3PeaksLuders' && (
+                        <Notice tone="info">
+                          冷間圧延材用（原田 ver4）: 変態開始 num 以降だけを解析します（初期値ファイル → 変態開始の逆向き、初期値ファイル →
+                          最後の前向き）。初期値は変態開始後のファイルから選んでください。
+                        </Notice>
+                      )}
+
                       {cfg.peaks.some((pk) => pk === 'bcc110' || pk === 'bcc101') && (
                         <div className="p-2.5 rounded-md bg-[#0a0b0e] border border-amber-500/35 space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <CheckboxRow
-                              checked={cfg.use_bcc211_constraint ?? true}
+                              checked={cfg.use_bcc211_constraint ?? false}
                               onChange={(val) =>
                                 updateGroupConfig(cfg.group_id, {
                                   use_bcc211_constraint: val,
@@ -594,11 +596,11 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                               }
                               label={
                                 <span className="text-xs font-medium text-amber-200">
-                                  bcc211 物理拘束 (Bragg 幾何 + tanθ 幅)
+                                  bcc211 物理拘束 (Bragg 幾何 + tanθ 幅・原田法には無い任意機能)
                                 </span>
                               }
                             />
-                            {(cfg.use_bcc211_constraint ?? true) && (
+                            {(cfg.use_bcc211_constraint ?? false) && (
                               <div className="flex items-center gap-1.5">
                                 <span className="text-[11px] font-mono text-[#9ca3b0]">Δθ_tol</span>
                                 <UnitNumberInput
@@ -664,7 +666,7 @@ export const Step3BatchRun: React.FC<Step3BatchRunProps> = ({
                         {cfg.peaks.map((pkName, pkIdx) => {
                           const vKey = `v${pkIdx + 1}`;
                           const lim =
-                            cfg.default_fit_limits?.[vKey] || DEFAULT_LIMIT_TEMPLATE;
+                            cfg.default_fit_limits?.[vKey] || defaultLimitsFor(cfg.engine, pkIdx);
                           return (
                             <div
                               key={pkName}

@@ -1,19 +1,30 @@
 # -*- coding: utf-8 -*-
-"""Single-peak bidirectional continuous Voigt fitter (`fittning_1peaks_ver7.0_NH.py` equivalent).
+"""Single-peak bidirectional continuous Voigt fitter.
 
-Fixes:
-- Bug #1: Removed premature `prev_residual = relative_residual` assignment before
-  `if relative_residual < prev_residual:`, ensuring the best parameter set across
-  random retry attempts is properly preserved.
-- Bug #4: Unified column order `[num, 2th_{peak}, I_{peak}, wG_{peak}, wL_{peak}, FWHM_{peak}]`.
-- Bug #5: Strict regex file number extraction.
-- Bug #6/#7: Removed `plt.show()` blocking; streams results via callback/WebSocket.
-- Bug #8: Replaced `np.trapz` with `scipy.integrate.trapezoid`.
+Faithful port of Harada's `fittning_1peaks_ver7.0_NH.py`:
+- The window `[xc0 + fitting_range_min, xc0 + fitting_range_max]` (default +-0.7 deg) of the
+  background-removed data is fitted with ONE Voigt function and no local background term.
+- Per-frame limits are relative to the previous frame (`default_fit_limits` of ver7.0).
+- The amplitude guess is scaled by the window integral ratio `current_integral / prev_integral`.
+- Starting values are randomly perturbed before every fit; if the relative residual
+  `RMS(residual) / mean(|I|)` exceeds `residual_limit`, the fit is retried with larger perturbations.
+- Backward pass `target -> first file`, then a reset to the initial values and a forward pass
+  `target + 1 -> last file`.
+- ver7.0 has no "zero before DIMT onset" logic for single peaks; it is available here only as an
+  opt-in (`suppress_before_onset=True`).
+
+Bug fixes relative to ver7.0 (logic only, the analysis method is unchanged):
+- #1 Retry loop: `prev_residual = relative_residual` was assigned before the comparison, so the best
+  attempt was never kept. The best attempt (lowest relative residual) is now kept.
+- Multiple peaks in one run reused `prev_params` of the previous peak (window and bounds of the 2nd
+  peak were centred on the 1st peak). Each peak now has its own fitter instance and state.
+- The forward pass kept `prev_integral` from the end of the backward pass; it is now reset.
+- #5 strict file-number parsing, #6 no `plt.show()`, #8 `np.trapz` -> `scipy.integrate.trapezoid`.
+- Fixed random seed per frame for reproducibility.
 """
 
 from __future__ import annotations
 
-import copy
 import random
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -22,6 +33,10 @@ import numpy as np
 from lmfit.models import VoigtModel
 
 from .base_fitter import PARAM_NAMES, BaseFitter, FitStepPayload, is_martensite_peak
+
+# Perturbation ranges of ver7.0 (center: additive, others: multiplicative)
+_PRE_FIT_PERTURB = {"center": (-0.001, 0.001), "amplitude": (0.999, 1.001), "sigma": (0.95, 1.05), "gamma": (0.95, 1.05)}
+_RETRY_PERTURB = {"center": (-0.001, 0.001), "amplitude": (0.97, 1.03), "sigma": (0.90, 1.10), "gamma": (0.90, 1.10)}
 
 
 class SinglePeakFitter(BaseFitter):
@@ -37,7 +52,8 @@ class SinglePeakFitter(BaseFitter):
         fitting_range_max: float = 0.7,
         th_min: Optional[float] = None,
         th_max: Optional[float] = None,
-        dimt_onset_num: int = 200,
+        dimt_onset_num: int = 0,
+        suppress_before_onset: bool = False,
         default_fit_limits: Optional[Dict[str, Dict[str, float]]] = None,
         update_list: Optional[List[Tuple[str, str, float]]] = None,
         residual_limit: float = 0.7,
@@ -61,156 +77,108 @@ class SinglePeakFitter(BaseFitter):
             max_attempts=max_attempts,
         )
         self.dimt_onset_num = int(dimt_onset_num)
+        self.suppress_before_onset = bool(suppress_before_onset)
+
+    def _is_suppressed(self, k_zero_based: int, num_val: int) -> bool:
+        return (
+            self.suppress_before_onset
+            and self.dimt_onset_num > 0
+            and num_val < self.dimt_onset_num
+            and is_martensite_peak(self.peaks[k_zero_based])
+        )
 
     def _perform_fitting_once(
         self,
         th: np.ndarray,
         In: np.ndarray,
-        cand_init_pars: Dict[str, float],
+        cand_pars: Dict[str, float],
         num_val: int,
     ) -> Tuple[Any, Dict[str, np.ndarray], float, float]:
-        """Run one lmfit Voigt optimization with independent sigma & gamma."""
-        fit_limits = self.get_effective_limits()
-        scaled_amplitude_guess = [
-            max(0.0, amp * self.intensity_scale_factor) for amp in self.prev_params["amplitude"]
-        ]
+        """One lmfit Voigt optimisation with ver7.0 bounds (sigma and gamma independent)."""
+        lim_all = self.get_effective_limits()
+        scaled = [amp * self.intensity_scale_factor for amp in self.prev_params["amplitude"]]
 
         mod = None
         pars = None
-
         for k in range(1, self.n + 1):
             prefix = f"v{k}_"
             vm = VoigtModel(prefix=prefix)
             p = vm.make_params()
-            lim = fit_limits[f"v{k}"]
-            pk_name = self.peaks[k - 1]
+            lim = lim_all[f"v{k}"]
 
             c_prev = self.prev_params["center"][k - 1]
-            c_min = c_prev + lim.get("center_min_offset", -0.05)
-            c_max = c_prev + lim.get("center_max_offset", 0.20)
-            # Item 2: Guard against min >= max inversion
-            if c_min >= c_max:
-                c_max = c_min + 0.02
-            c_val = min(max(cand_init_pars[f"v{k}_center"], c_min + 1e-6), c_max - 1e-6)
+            c_min, c_max = self.bounded(c_prev + lim["center_min_offset"], c_prev + lim["center_max_offset"], 0.02)
 
-            # Item 4: Default variation limits: amplitude 0.80 ~ 1.25, sigma & gamma 0.70 ~ 1.40
-            amp_guess = scaled_amplitude_guess[k - 1]
-            a_min = max(0.0, amp_guess * lim.get("amplitude_min_factor", 0.80) + lim.get("amplitude_min_offset", 0.0))
-            a_max = max(a_min + 1.0, amp_guess * lim.get("amplitude_max_factor", 1.25) + lim.get("amplitude_max_offset", 10.0))
-            a_val = min(max(amp_guess, a_min), a_max)
+            a_min = max(0.0, scaled[k - 1] * lim["amplitude_min_factor"] + lim["amplitude_min_offset"])
+            a_max = scaled[k - 1] * lim["amplitude_max_factor"] + lim["amplitude_max_offset"]
+            a_min, a_max = self.bounded(a_min, a_max, 1.0)
 
             s_prev = self.prev_params["sigma"][k - 1]
-            s_min = max(1e-6, s_prev * lim.get("sigma_min_factor", 0.70) + lim.get("sigma_min_offset", 0.0))
-            s_max = max(s_min + 1e-5, s_prev * lim.get("sigma_max_factor", 1.40) + lim.get("sigma_max_offset", 1e-6))
-            s_val = min(max(cand_init_pars[f"v{k}_sigma"], s_min), s_max)
+            s_min = max(1e-6, s_prev * lim["sigma_min_factor"] + lim["sigma_min_offset"])
+            s_min, s_max = self.bounded(s_min, s_prev * lim["sigma_max_factor"] + lim["sigma_max_offset"], 1e-5)
 
             g_prev = self.prev_params["gamma"][k - 1]
-            g_min = max(1e-10, g_prev * lim.get("gamma_min_factor", 0.70) + lim.get("gamma_min_offset", 0.0))
-            g_max = max(g_min + 1e-5, g_prev * lim.get("gamma_max_factor", 1.40) + lim.get("gamma_max_offset", 1e-6))
-            g_val = min(max(cand_init_pars[f"v{k}_gamma"], g_min), g_max)
+            g_min = max(0.0, g_prev * lim["gamma_min_factor"] + lim["gamma_min_offset"])
+            g_min, g_max = self.bounded(g_min, g_prev * lim["gamma_max_factor"] + lim["gamma_max_offset"], 1e-5)
 
-            # Item 5: Fix martensite (alpha'-BCC) peak intensity to 0.0 before transformation onset (num < dimt_onset_num)
-            is_suppressed = (
-                self.dimt_onset_num > 0
-                and num_val < self.dimt_onset_num
-                and is_martensite_peak(pk_name)
-            )
-            if is_suppressed:
-                p[f"{prefix}center"].set(value=c_val, min=c_min, max=c_max, vary=False)
-                p[f"{prefix}amplitude"].set(value=0.0, min=0.0, max=1e-9, vary=False, expr=None)
-                p[f"{prefix}sigma"].set(value=s_val, min=s_min, max=s_max, vary=False)
-                p[f"{prefix}gamma"].set(value=g_val, min=g_min, max=g_max, vary=False, expr=None)
+            vary = not self._is_suppressed(k - 1, num_val)
+            p[f"{prefix}center"].set(value=float(np.clip(cand_pars[f"v{k}_center"], c_min, c_max)), min=c_min, max=c_max, vary=vary)
+            if vary:
+                p[f"{prefix}amplitude"].set(value=float(np.clip(scaled[k - 1], a_min, a_max)), min=a_min, max=a_max, vary=True)
             else:
-                p[f"{prefix}center"].set(value=c_val, min=c_min, max=c_max, vary=True)
-                p[f"{prefix}amplitude"].set(value=a_val, min=a_min, max=a_max, vary=True)
-                p[f"{prefix}sigma"].set(value=s_val, min=s_min, max=s_max, vary=True)
-                # Item 1: Origin-compatible independent Lorentzian width (vary=True, expr=None)
-                p[f"{prefix}gamma"].set(value=g_val, min=g_min, max=g_max, vary=True, expr=None)
+                p[f"{prefix}amplitude"].set(value=0.0, min=0.0, max=1e-9, vary=False)
+            p[f"{prefix}sigma"].set(value=float(np.clip(cand_pars[f"v{k}_sigma"], s_min, s_max)), min=s_min, max=s_max, vary=vary)
+            # lmfit's VoigtModel ties gamma to sigma by default (expr='sigma'); Origin fits wL independently.
+            p[f"{prefix}gamma"].set(value=float(np.clip(cand_pars[f"v{k}_gamma"], g_min, g_max)), min=g_min, max=g_max, vary=vary, expr=None)
 
             if mod is None:
-                mod = vm
-                pars = p
+                mod, pars = vm, p
             else:
                 mod += vm
                 pars.update(p)
 
-        out = mod.fit(In, pars, x=th, method="leastsq", max_nfev=1000)
+        out = mod.fit(In, pars, x=th, method="leastsq")
         comps = out.eval_components(x=th)
         residual_mean = float(np.sqrt(np.mean(out.residual ** 2)))
-        mean_abs_in = max(1e-6, float(np.mean(np.abs(In))))
-        relative_residual = residual_mean / mean_abs_in
-
+        relative_residual = residual_mean / max(1e-12, float(np.mean(np.abs(In))))
         return out, comps, residual_mean, relative_residual
 
     def fit_one_file(self, file_index: int, completed_count: int) -> FitStepPayload:
-        # Item 7-2: Fixed random seed for 100% deterministic reproducibility
         random.seed(42)
         np.random.seed(42)
 
         num, fname, th, In = self.load_window_data(file_index)
+        suppressed_idx = [k for k in range(self.n) if self._is_suppressed(k, num)]
 
-        # Initial fit pass
-        work_pars = copy.deepcopy(self.Init_pars)
-        out, comps, residual_mean, relative_residual = self._perform_fitting_once(th, In, work_pars, num)
-
-        # Item 3-1: Initialize prev_residual and best state from initial fit BEFORE retry loop
-        prev_residual = relative_residual
-        best_out = out
-        best_comps = comps
-        best_residual_mean = residual_mean
-        best_pars = {
-            f"v{r}_{name}": float(out.best_values.get(f"v{r}_{name}", work_pars[f"v{r}_{name}"]))
-            for r in range(1, self.n + 1)
-            for name in PARAM_NAMES
-        }
-
-        all_suppressed = all(
-            self.dimt_onset_num > 0 and num < self.dimt_onset_num and is_martensite_peak(pk)
-            for pk in self.peaks
-        )
+        # ver7.0: perturb the starting values, then fit
+        start = self.perturb(self.Init_pars, self.n, _PRE_FIT_PERTURB, skip=suppressed_idx)
+        out, comps, residual_mean, relative_residual = self._perform_fitting_once(th, In, start, num)
+        best = (relative_residual, out, comps, residual_mean)
 
         attempt = 0
-        while not all_suppressed and prev_residual >= self.residual_limit and attempt < self.max_attempts:
+        while best[0] >= self.residual_limit and attempt < self.max_attempts and len(suppressed_idx) < self.n:
             attempt += 1
-            trial_pars = copy.deepcopy(best_pars)
-            for p_idx in range(1, self.n + 1):
-                trial_pars[f"v{p_idx}_center"] += random.uniform(-0.002, 0.002)
-                trial_pars[f"v{p_idx}_amplitude"] *= random.uniform(0.95, 1.05)
-                trial_pars[f"v{p_idx}_sigma"] *= random.uniform(0.90, 1.10)
-                trial_pars[f"v{p_idx}_gamma"] *= random.uniform(0.90, 1.10)
+            base = {f"v{r}_{nm}": float(best[1].best_values[f"v{r}_{nm}"]) for r in range(1, self.n + 1) for nm in PARAM_NAMES}
+            trial = self.perturb(base, self.n, _RETRY_PERTURB, skip=suppressed_idx)
+            o2, c2, rm2, rr2 = self._perform_fitting_once(th, In, trial, num)
+            if rr2 < best[0]:  # Bug #1 fix: keep the best attempt only
+                best = (rr2, o2, c2, rm2)
 
-            out_try, comps_try, res_mean_try, rel_res_try = self._perform_fitting_once(th, In, trial_pars, num)
+        relative_residual, out, comps, residual_mean = best
+        best_pars = {f"v{r}_{nm}": float(out.best_values[f"v{r}_{nm}"]) for r in range(1, self.n + 1) for nm in PARAM_NAMES}
 
-            # Item 3-1: ONLY update prev_residual and best_out/best_pars when residual strictly improves!
-            if rel_res_try < prev_residual:
-                prev_residual = rel_res_try
-                best_out = out_try
-                best_comps = comps_try
-                best_residual_mean = res_mean_try
-                for r in range(1, self.n + 1):
-                    for name in PARAM_NAMES:
-                        best_pars[f"v{r}_{name}"] = float(out_try.best_values.get(f"v{r}_{name}"))
-
-        # Update tracking state for next file (unless peak was suppressed to 0 before DIMT onset)
-        if not all_suppressed:
-            self.prev_integral = self.current_integral
-            self.prev_params = {
-                name: [float(best_pars[f"v{r}_{name}"]) for r in range(1, self.n + 1)]
-                for name in PARAM_NAMES
-            }
-            for r in range(1, self.n + 1):
-                for name in PARAM_NAMES:
-                    self.Init_pars[f"v{r}_{name}"] = self.prev_params[name][r - 1]
-        else:
-            for r in range(1, self.n + 1):
+        # Carry the fitted parameters to the next frame (suppressed peaks keep their previous state)
+        self.prev_integral = self.current_integral
+        for r in range(1, self.n + 1):
+            if (r - 1) in suppressed_idx:
                 best_pars[f"v{r}_amplitude"] = 0.0
+                continue
+            for nm in PARAM_NAMES:
+                self.prev_params[nm][r - 1] = best_pars[f"v{r}_{nm}"]
+                self.Init_pars[f"v{r}_{nm}"] = best_pars[f"v{r}_{nm}"]
 
-        row_data = self.build_row_dict(num, best_pars, residual=prev_residual)
-        comp_lists = {
-            self.peaks[r - 1]: best_comps.get(f"v{r}_", np.zeros_like(th)).tolist()
-            for r in range(1, self.n + 1)
-        }
-
+        row_data = self.build_row_dict(num, best_pars, residual=relative_residual)
+        comp_lists = {self.peaks[r - 1]: comps.get(f"v{r}_", np.zeros_like(th)).tolist() for r in range(1, self.n + 1)}
         payload = FitStepPayload(
             group_id=self.group_id,
             engine=self.engine_name,
@@ -220,36 +188,30 @@ class SinglePeakFitter(BaseFitter):
             completed_files=completed_count,
             num=num,
             filename=fname,
-            residual_rmse=best_residual_mean,
-            relative_residual=prev_residual,
+            residual_rmse=residual_mean,
+            relative_residual=relative_residual,
             attempts=attempt,
-            is_outlier=bool(not all_suppressed and prev_residual >= self.residual_limit),
+            is_outlier=bool(len(suppressed_idx) < self.n and relative_residual >= self.residual_limit),
             row_data=row_data,
             x=th.tolist(),
             y_obs=In.tolist(),
-            y_fit=best_out.best_fit.tolist(),
+            y_fit=out.best_fit.tolist(),
             components=comp_lists,
         )
         self.results_by_num[num] = payload
         return payload
 
-    def run_all(
-        self,
-        step_callback: Optional[Callable[[FitStepPayload], None]] = None,
-    ) -> Dict[str, Any]:
-        """Run bidirectional fitting from `target_index -> 0` and `target_index + 1 -> end`."""
+    def run_all(self, step_callback: Optional[Callable[[FitStepPayload], None]] = None) -> Dict[str, Any]:
+        """Backward pass `target -> first`, reset to initial values, forward pass `target + 1 -> last`."""
         self.results_by_num.clear()
         self.reset_to_initial()
         completed = 0
-
-        # Step 1: Backward from target_index down to 0
         for i in reversed(range(0, self.target_index + 1)):
             completed += 1
             payload = self.fit_one_file(i, completed_count=completed)
             if step_callback:
                 step_callback(payload)
 
-        # Step 2: Reset to initial and run forward from target_index + 1 to end
         self.reset_to_initial()
         for i in range(self.target_index + 1, len(self.files)):
             completed += 1

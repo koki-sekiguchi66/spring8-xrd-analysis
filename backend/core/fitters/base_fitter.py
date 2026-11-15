@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import math
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -20,7 +21,6 @@ from ..origin_voigt import (
     gamma_to_wL,
     is_martensite_peak,
     sigma_to_wG,
-    subtract_local_linear_bg,
     wG_to_sigma,
     wL_to_gamma,
 )
@@ -116,7 +116,14 @@ class BaseFitter:
         self.th_min = float(th_min) if th_min is not None else float(self.Init_pars["v1_center"] - 0.7)
         self.th_max = float(th_max) if th_max is not None else float(self.Init_pars[f"v{self.n}_center"] + 0.7)
 
-        self.default_fit_limits = copy.deepcopy(default_fit_limits) if default_fit_limits else self._default_limits()
+        # Engine defaults (Harada's original values) with any user-supplied entries merged on top,
+        # so a partial override (e.g. only v1.amplitude_max_factor) never drops the other keys.
+        self.default_fit_limits = self._default_limits()
+        for peak_key, entries in (default_fit_limits or {}).items():
+            if peak_key in self.default_fit_limits and isinstance(entries, dict):
+                for param_key, value in entries.items():
+                    if value is not None:
+                        self.default_fit_limits[peak_key][param_key] = float(value)
         self.update_list: List[Tuple[str, str, float]] = list(update_list) if update_list else []
         self.residual_limit = float(residual_limit)
         self.max_attempts = int(max_attempts)
@@ -124,32 +131,73 @@ class BaseFitter:
         self.prev_integral: float = 0.0
         self.current_integral: float = 0.0
         self.intensity_scale_factor: float = 1.0
-        self.current_bkg_slope: float = 0.0
-        self.current_bkg_intercept: float = 0.0
 
         self.results_by_num: Dict[int, FitStepPayload] = {}
         self._file_cache: Dict[int, np.ndarray] = {}
 
     def _default_limits(self) -> Dict[str, Dict[str, float]]:
+        """Per-frame parameter limits (relative to the previous frame).
+
+        Default = `default_fit_limits` of Harada's `fittning_1peaks_ver7.0_NH.py`.
+        Each engine overrides this with the defaults of its own original script.
+        """
         limits: Dict[str, Dict[str, float]] = {}
         for idx in range(self.n):
             limits[f"v{idx + 1}"] = {
                 "center_min_offset": -0.05,
                 "center_max_offset": 0.20,
-                "amplitude_min_factor": 0.80,
-                "amplitude_max_factor": 1.25,
+                "amplitude_min_factor": 0.70,
+                "amplitude_max_factor": 1.40,
                 "amplitude_min_offset": 0.0,
                 "amplitude_max_offset": 10.0,
-                "sigma_min_factor": 0.70,
-                "sigma_max_factor": 1.40,
-                "sigma_min_offset": 0.0,
-                "sigma_max_offset": 1e-6,
-                "gamma_min_factor": 0.70,
-                "gamma_max_factor": 1.40,
-                "gamma_min_offset": 0.0,
-                "gamma_max_offset": 1e-6,
+                "sigma_min_factor": 0.80,
+                "sigma_max_factor": 1.30,
+                "sigma_min_offset": -1e-3,
+                "sigma_max_offset": 1e-3,
+                "gamma_min_factor": 0.80,
+                "gamma_max_factor": 1.30,
+                "gamma_min_offset": -1e-3,
+                "gamma_max_offset": 1e-3,
             }
         return limits
+
+    @staticmethod
+    def merge_limits(
+        base: Dict[str, Dict[str, float]],
+        update_list: Optional[List[Tuple[str, str, float]]] = None,
+    ) -> Dict[str, Dict[str, float]]:
+        """Apply Harada-style `update_list = [(peak_key, param_key, value), ...]` to a copy of `base`."""
+        merged = copy.deepcopy(base)
+        for peak_key, param_key, new_value in update_list or []:
+            if peak_key in merged:
+                merged[peak_key][param_key] = float(new_value)
+        return merged
+
+    @staticmethod
+    def bounded(lo: float, hi: float, min_width: float) -> Tuple[float, float]:
+        """Return `(lo, hi)` with a guaranteed positive width (lmfit silently swaps inverted bounds)."""
+        if not (hi > lo):
+            hi = lo + min_width
+        return lo, hi
+
+    @staticmethod
+    def perturb(pars: Dict[str, float], n: int, ranges: Dict[str, Tuple[float, float]], skip: Optional[List[int]] = None) -> Dict[str, float]:
+        """Harada-style random perturbation of starting values.
+
+        `ranges['center']` is an additive range; the others are multiplicative ranges.
+        Uses the module-level `random` state, which callers seed per frame for reproducibility.
+        """
+        out = dict(pars)
+        skip_set = set(skip or [])
+        for k in range(1, n + 1):
+            if (k - 1) in skip_set:
+                continue
+            if "center" in ranges:
+                out[f"v{k}_center"] = out[f"v{k}_center"] + random.uniform(*ranges["center"])
+            for name in ("amplitude", "sigma", "gamma"):
+                if name in ranges:
+                    out[f"v{k}_{name}"] = out[f"v{k}_{name}"] * random.uniform(*ranges[name])
+        return out
 
     def _normalize_init_pars(self, raw: Dict[str, Any]) -> Dict[str, float]:
         """Accept either `{v1_center, v1_amplitude, v1_sigma, v1_gamma}` or `{v1_wG, v1_wL}`."""
@@ -189,7 +237,13 @@ class BaseFitter:
         return fit_limits
 
     def load_window_data(self, file_index: int) -> Tuple[int, str, np.ndarray, np.ndarray]:
-        """Load `(th, In)` slice within `[th_min, th_max]` for `file_index`, subtract 10-pt linear BG, and update integral scaling."""
+        """Load the `(th, In)` slice within `[th_min, th_max]` for `file_index` and update the integral scaling.
+
+        Faithful to Harada's scripts: the background is removed only once in preprocessing
+        (`bg_remover.py`), and the window is fitted with Voigt components only. The edge-based
+        10-point linear subtraction exists in the originals only as commented-out code; applying it
+        removes the Lorentzian tails of broad alpha' peaks (about -17 % area at FWHM 0.47 deg).
+        """
         num, path = self.files[file_index]
         if file_index not in self._file_cache:
             self._file_cache[file_index] = np.loadtxt(path, delimiter=",", dtype=float)
@@ -201,14 +255,10 @@ class BaseFitter:
             raise ValueError(f"Insufficient points ({len(sub)}) in [{self.th_min}, {self.th_max}] for {path.name}")
 
         th = sub[:, 0]
-        In_raw = sub[:, 1]
+        In = sub[:, 1]
 
-        # Item 7-1: Unified local linear background subtraction using the 10 edge points on each side
-        In, _y_bg, bkg_slope, bkg_int = subtract_local_linear_bg(th, In_raw, n_edge=10)
-        self.current_bkg_slope = bkg_slope
-        self.current_bkg_intercept = bkg_int
-
-        # Bug #8 fix: Use scipy.integrate.trapezoid instead of deprecated np.trapz
+        # Integral-intensity scale factor (Harada: current_integral / prev_integral).
+        # Bug #8 fix: scipy.integrate.trapezoid instead of the removed np.trapz.
         self.current_integral = max(0.0, float(trapezoid(In, th)))
         if self.prev_integral > 0 and self.current_integral > 0:
             self.intensity_scale_factor = max(0.1, min(10.0, self.current_integral / self.prev_integral))
